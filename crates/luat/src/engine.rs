@@ -1404,15 +1404,16 @@ _G.require = __enhanced_require
             bundle.push_str("}\n");
 
             // Add the module loader
-            bundle.push_str(&format!("__module_loaders['{}'] = function()\n", name));
+            let escaped_name = escape_lua_string(name);
+            bundle.push_str(&format!("__module_loaders['{}'] = function()\n", escaped_name));
             bundle.push_str("  local __prev = _G.__luat_current_module\n");
-            bundle.push_str(&format!("  _G.__luat_current_module = '{}'\n", name));
+            bundle.push_str(&format!("  _G.__luat_current_module = '{}'\n", escaped_name));
             bundle.push_str("  local ok, result = pcall(function()\n");
             bundle.push_str(lua_code);
             bundle.push_str("\n  end)\n");
             bundle.push_str("  _G.__luat_current_module = __prev\n");
             bundle.push_str("  if not ok then\n");
-            bundle.push_str(&format!("    __wrap_error('{}', result)\n", name));
+            bundle.push_str(&format!("    __wrap_error('{}', result)\n", escaped_name));
             bundle.push_str("  end\n");
             bundle.push_str("  return result\n");
             bundle.push_str("end\n");

@@ -284,7 +284,7 @@ impl LuaCodeGenerator {
         self.write_line("");
         self.write_line("-- Exported module");
         self.write_line("exports.render = render");
-        self.write_line(&format!("exports.moduleName = \"{}\"", self.module_name));
+        self.write_line(&format!("exports.moduleName = \"{}\"", escape_lua_string(&self.module_name)));
         self.write_line("");
         self.write_line("return exports");
 
@@ -889,7 +889,8 @@ fn is_void_element(tag: &str) -> bool {
     )
 }
 
-fn escape_lua_string(s: &str) -> String {
+/// Escapes a string for use in a Lua string literal.
+pub fn escape_lua_string(s: &str) -> String {
     s.replace("\\", "\\\\")
         .replace("\"", "\\\"")
         .replace("\n", "\\n")
@@ -1081,10 +1082,11 @@ where
         let bundle_lines_so_far = bundle.lines().count();
         let module_source_start_line = bundle_lines_so_far + 6; // 5 wrapper lines + 1 for 1-indexing
 
+        let escaped_name = escape_lua_string(name);
         bundle.push_str(&format!("-- Module: {}\n", name));
-        bundle.push_str(&format!("__module_loaders[\"{}\"] = function()\n", name));
+        bundle.push_str(&format!("__module_loaders[\"{}\"] = function()\n", escaped_name));
         bundle.push_str("  local __prev = _G.__luat_current_module\n");
-        bundle.push_str(&format!("  _G.__luat_current_module = \"{}\"\n", name));
+        bundle.push_str(&format!("  _G.__luat_current_module = \"{}\"\n", escaped_name));
         bundle.push_str("  local __ok, __result = pcall(function()\n");
 
         // Indent the source code
@@ -1098,7 +1100,7 @@ where
         bundle.push_str("  _G.__luat_current_module = __prev\n");
         bundle.push_str(&format!(
             "  if not __ok then error(__enhance_error(__result, \"{}\"), 2) end\n",
-            name
+            escaped_name
         ));
         bundle.push_str("  return __result\n");
         bundle.push_str("end\n\n");
