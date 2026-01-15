@@ -13,7 +13,7 @@ We take security vulnerabilities seriously. If you discover a security issue, pl
 ### How to Report
 
 1. **Do not** open a public GitHub issue for security vulnerabilities
-2. Email us at [security@maravilla-labs.com](mailto:security@maravilla-labs.com) with:
+2. Email us at [security@maravilla-labs.com](mailto:security@maravillalabs.com) with:
    - A description of the vulnerability
    - Steps to reproduce the issue
    - Potential impact assessment
@@ -45,7 +45,7 @@ When using luat:
 This security policy applies to:
 
 - The luat CLI tool
-- Official npm packages (`@anthropic-ai/luat`, platform-specific packages)
+- Official npm packages
 - Code in this repository
 
 Third-party dependencies are subject to their own security policies.
