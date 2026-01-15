@@ -2248,11 +2248,9 @@ _G.__bundle_debug = {
     fn extract_view_title_from_context(&self, runtime: &Table) -> Result<Option<String>> {
         // First check page_context (non-scoped, takes precedence)
         if let Ok(page_ctx) = runtime.get::<Table>("page_context") {
-            if let Ok(val) = page_ctx.get::<mlua::Value>("view_title") {
-                if let mlua::Value::String(s) = val {
-                    if let Ok(title) = s.to_str() {
-                        return Ok(Some(title.to_string()));
-                    }
+            if let Ok(mlua::Value::String(s)) = page_ctx.get::<mlua::Value>("view_title") {
+                if let Ok(title) = s.to_str() {
+                    return Ok(Some(title.to_string()));
                 }
             }
         }
@@ -2267,11 +2265,9 @@ _G.__bundle_debug = {
         // Search from top to bottom of stack (most recent context first)
         for i in (1..=len).rev() {
             if let Ok(scope) = stack.get::<Table>(i) {
-                if let Ok(val) = scope.get::<mlua::Value>("view_title") {
-                    if let mlua::Value::String(s) = val {
-                        if let Ok(title) = s.to_str() {
-                            return Ok(Some(title.to_string()));
-                        }
+                if let Ok(mlua::Value::String(s)) = scope.get::<mlua::Value>("view_title") {
+                    if let Ok(title) = s.to_str() {
+                        return Ok(Some(title.to_string()));
                     }
                 }
             }

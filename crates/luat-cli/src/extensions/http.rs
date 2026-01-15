@@ -146,10 +146,8 @@ fn make_request(lua: &Lua, method: &str, url: &str, options: Option<Table>) -> L
     if let Some(ref opts) = options {
         // Extract headers
         if let Ok(headers_table) = opts.get::<Table>("headers") {
-            for pair in headers_table.pairs::<String, String>() {
-                if let Ok((k, v)) = pair {
-                    headers_map.insert(k, v);
-                }
+            for (k, v) in headers_table.pairs::<String, String>().flatten() {
+                headers_map.insert(k, v);
             }
         }
 
