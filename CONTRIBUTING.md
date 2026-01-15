@@ -269,45 +269,6 @@ When modifying the grammar:
 3. Update tests in `parser.rs`
 4. Update documentation if syntax changes
 
-## WebAssembly (WASM) Support
-
-Luat can be compiled to WebAssembly for running in browsers, edge runtimes, and other WASM environments.
-
-### Building for WASM
-
-```bash
-# 1. Install Emscripten SDK (required for mlua WASM support)
-git clone https://github.com/emscripten-core/emsdk.git
-cd emsdk
-./emsdk install latest
-./emsdk activate latest
-source ./emsdk_env.sh
-
-# 2. Add the WASM target
-rustup target add wasm32-unknown-emscripten
-
-# 3. Build the luat crate for WASM
-cargo build --package luat --target wasm32-unknown-emscripten --no-default-features --features wasm
-```
-
-### Feature Flags
-
-| Feature | Description | Default |
-|---------|-------------|---------|
-| `native` | Full native support with threading and filesystem | Yes |
-| `wasm` | WASM-compatible build (single-threaded, no filesystem) | No |
-| `send` | Enable `Send` trait for multi-threaded usage | Yes (with native) |
-| `async-lua` | Enable async Lua methods | Yes (with native) |
-| `filesystem` | Enable filesystem resolver and cache | Yes (with native) |
-
-### WASM Limitations
-
-When building for WASM, the following features are not available:
-- `FileSystemResolver` and `FileSystemCache` (use `MemoryResourceResolver` and `MemoryCache` instead)
-- Async Lua methods (`render_from_bundle` async)
-- Thread-safe types (`Send` trait)
-
-
 ### Testing
 
 - Unit tests go in the same file as the code (`#[cfg(test)]` module)
