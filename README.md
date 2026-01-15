@@ -34,17 +34,12 @@
 - **Server-side rendering** - Pure SSR with no client hydration overhead
 - **Component system** - Reusable components with props and children
 - **Lua-powered** - Templates compile to Lua for fast execution
-- **Template bundling** - Bundle templates for production deployment
-- **Built-in caching** - Memory or filesystem caching for compiled templates
 - **CLI with live reload** - Development server with automatic browser refresh
 
 ## Installation
 
-
-### From CLI
-
 ```bash
-# npm (recommended for JS/TS projects)
+# npm (recommended)
 npm install -g @maravilla-labs/luat
 
 # Shell script (Linux/macOS)
@@ -56,154 +51,34 @@ cargo install luat-cli
 
 ## Quick Start
 
-### CLI Usage
-
 ```bash
-# Create a new project
 luat init my-app
 cd my-app
-
-# Start development server with live reload
 luat dev
-
-# Build for production
-luat build
 ```
 
-
-### Library Usage
-
-```rust
-use luat::{Engine, FileSystemResolver};
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create engine with filesystem resolver
-    let resolver = FileSystemResolver::new("./templates");
-    let engine = Engine::with_memory_cache(resolver, 100)?;
-
-    // Compile and render a template
-    let module = engine.compile_entry("hello.luat")?;
-    let context = engine.to_value(serde_json::json!({
-        "name": "World",
-        "items": ["Apple", "Banana", "Cherry"]
-    }))?;
-
-    let html = engine.render(&module, &context)?;
-    println!("{}", html);
-    Ok(())
-}
-```
-
-## Template Syntax
-
-### Text Interpolation
+## Example
 
 ```html
-<h1>Hello, {props.name}!</h1>
-<p>Count: {props.count + 1}</p>
-```
+<!-- HomePage.luat -->
+<script>
+    local Card = require("components/Card")
+    local title = "Welcome to LUAT"
+    local subtitle = "Build dynamic web applications"
+</script>
 
-### Conditionals
-
-```html
-{#if props.user.admin}
-    <p>Welcome, admin!</p>
-{:else if props.user.moderator}
-    <p>Welcome, moderator!</p>
-{:else}
-    <p>Welcome, user!</p>
-{/if}
-```
-
-### Loops
-
-```html
-{#each props.items as item, index}
-    <li>{index + 1}. {item.name}</li>
-{:empty}
-    <li>No items found</li>
-{/each}
-```
-
-### Components
-
-```html
-<!-- components/Card.luat -->
-<div class="card">
-    <h2>{props.title}</h2>
-    <div class="card-body">
-        {@render props.children?.()}
-    </div>
+<div class="homepage">
+    <Card title={title} subtitle={subtitle} />
 </div>
 ```
 
-```html
-<!-- page.luat -->
-<script>
-    local Card = require("components/Card")
-</script>
+For the full syntax guide, see the [documentation](https://luat.maravillalabs.com/docs/templating/syntax). There's also a [live playground](https://luat.maravillalabs.com/playground) to try Luat in your browser.
 
-<Card title="My Card">
-    <p>Card content goes here</p>
-</Card>
-```
+## Documentation
 
-### Script Blocks
-
-```html
-<!-- Module script (runs once per module) -->
-<script module>
-    function formatPrice(price)
-        return string.format("$%.2f", price)
-    end
-</script>
-
-<!-- Regular script (runs on each render) -->
-<script>
-    local Card = require("Card")
-    local formatted = formatPrice(props.price)
-</script>
-```
-
-### Raw HTML
-
-```html
-<!-- Render unescaped HTML (use with caution) -->
-<div>{@html props.content}</div>
-```
-
-## Project Structure
-
-When using the CLI, the recommended project structure is:
-
-```
-my-app/
-├── luat.toml           # Project configuration
-├── templates/          # Template files
-│   ├── index.luat
-│   └── components/
-│       └── Card.luat
-├── public/             # Static assets
-└── dist/               # Build output
-```
-
-### Configuration (luat.toml)
-
-```toml
-[project]
-name = "my-app"
-version = "0.1.0"
-
-[dev]
-port = 3000
-host = "127.0.0.1"
-templates_dir = "templates"
-public_dir = "public"
-
-[build]
-output_dir = "dist"
-bundle_format = "source"  # or "binary"
-```
+- [Getting Started](https://luat.maravillalabs.com/docs/getting-started)
+- [Template Syntax](https://luat.maravillalabs.com/docs/templating/syntax)
+- [Project Structure](https://luat.maravillalabs.com/docs/application/structure)
 
 ## Editor Support
 
@@ -214,31 +89,13 @@ Get syntax highlighting, diagnostics, and autocomplete for `.luat` files:
 
 See [luat-tools](https://github.com/maravilla-labs/luat-tools) for installation instructions.
 
-## Documentation
-
-- [Getting Started](docs/getting-started.md)
-- [Template Syntax](docs/template-syntax.md)
-- [CLI Reference](docs/cli-reference.md)
-- [API Documentation](https://docs.rs/luat)
-
-## Examples
-
-See the [examples](examples/) directory for complete working examples:
-
-- **basic** - Simple library usage with memory and filesystem resolvers
-
 ## Contributing
 
 Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## License
 
-Licensed under either of:
-
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
-- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
-
-at your option.
+Licensed under either of [Apache-2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT) at your option.
 
 ## Credits
 

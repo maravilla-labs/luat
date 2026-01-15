@@ -30,6 +30,35 @@ use crate::error::{Result, LuatError};
 #[cfg(all(not(target_arch = "wasm32"), feature = "filesystem"))]
 use std::fs;
 
+/// Converts a Path to a normalized string with forward slashes.
+/// On Windows, uses path components to rebuild with `/` separators.
+#[inline]
+pub fn path_to_string<P: AsRef<Path>>(path: P) -> String {
+    #[cfg(windows)]
+    {
+        use std::path::Component;
+        let path = path.as_ref();
+        let mut result = String::new();
+        for (i, component) in path.components().enumerate() {
+            if i > 0 {
+                result.push('/');
+            }
+            match component {
+                Component::Prefix(p) => result.push_str(&p.as_os_str().to_string_lossy()),
+                Component::RootDir => result.push('/'),
+                Component::CurDir => result.push('.'),
+                Component::ParentDir => result.push_str(".."),
+                Component::Normal(s) => result.push_str(&s.to_string_lossy()),
+            }
+        }
+        result
+    }
+    #[cfg(not(windows))]
+    {
+        path.as_ref().to_string_lossy().to_string()
+    }
+}
+
 #[cfg(test)]
 use std::collections::HashMap;
 #[cfg(test)]
@@ -114,7 +143,7 @@ impl FileSystemResolver {
     /// Creates a new filesystem resolver with the given root directory.
     pub fn new<P: AsRef<Path>>(root_dir: P) -> Self {
         Self {
-            root_dir: root_dir.as_ref().to_string_lossy().to_string(),
+            root_dir: path_to_string(root_dir.as_ref()),
             lib_dir: None,
         }
     }
@@ -132,7 +161,7 @@ impl FileSystemResolver {
     /// // require("$lib/components/Button") resolves to ./src/lib/components/Button.luat
     /// ```
     pub fn with_lib_dir<P: AsRef<Path>>(mut self, lib_dir: P) -> Self {
-        self.lib_dir = Some(lib_dir.as_ref().to_string_lossy().to_string());
+        self.lib_dir = Some(path_to_string(lib_dir.as_ref()));
         self
     }
 
@@ -170,7 +199,7 @@ impl FileSystemResolver {
             ))?;
             
         Ok(ResolvedResource {
-            path: path.to_string_lossy().to_string(),
+            path: path_to_string(&path),
             source,
         })
     }
@@ -335,7 +364,7 @@ impl FileSystemResolver {
                     ));
                 }
 
-                Ok((canonical_path.clone(), canonical_path.to_string_lossy().into_owned()))
+                Ok((canonical_path.clone(), path_to_string(&canonical_path)))
             }
             None => Err(LuatError::ResolutionError(
                 format!("Module '{}' not found from importer '{}'", module_name, importer_path)
@@ -446,7 +475,7 @@ impl MemoryResourceResolver {
         let extensions = ["luat", "lua"];
         let mut found_key = None;
 
-        let path_str = potential_path_buf.to_string_lossy().to_string();
+        let path_str = path_to_string(&potential_path_buf);
         if path_str.ends_with(".luat") || path_str.ends_with(".lua") {
             if self.resources.contains_key(&path_str) {
                 found_key = Some(path_str);
