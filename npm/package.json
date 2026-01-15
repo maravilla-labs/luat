@@ -1,0 +1,31 @@
+{
+  "name": "@maravilla-labs/luat",
+  "version": "0.1.0",
+  "description": "Svelte-inspired server-side Lua templating CLI",
+  "bin": {
+    "luat": "run.js"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/maravilla-labs/luat.git"
+  },
+  "keywords": [
+    "template",
+    "lua",
+    "svelte",
+    "ssr",
+    "cli"
+  ],
+  "author": "Maravilla Labs <hello@maravilla-labs.com>",
+  "license": "Apache-2.0",
+  "bugs": {
+    "url": "https://github.com/maravilla-labs/luat/issues"
+  },
+  "homepage": "https://github.com/maravilla-labs/luat#readme",
+  "engines": {
+    "node": ">=16"
+  }
+}

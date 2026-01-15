@@ -1,0 +1,133 @@
+{/*
+================================================================================
+ROOT LAYOUT (+layout.luat)
+================================================================================
+Layouts wrap all pages in their directory and subdirectories. This root layout
+wraps EVERY page in the application.
+
+HOW LAYOUTS WORK:
+  1. When a user visits /blog, Luat renders:
+     - +layout.luat (this file) with +page.luat as children
+  2. Nested layouts are possible:
+     - /blog/+layout.luat would wrap only blog pages
+     - Children are passed down through props.children
+
+KEY CONCEPTS DEMONSTRATED:
+  - script block: Lua code that runs at render time
+  - Component imports: require("lib/components/NavItem")
+  - Props access: props.url, props.children
+  - Alpine.js integration: x-data, @click, x-show for reactivity
+  - Dark mode: Using Alpine.js + localStorage for theme persistence
+  - Conditional rendering: Show/hide based on dark state
+
+TEMPLATE SYNTAX:
+  {@html props.children}  - Renders child content (the actual page)
+  {isActive("/")}         - Calls Lua function and outputs result
+================================================================================
+*/}
+
+<script>
+--[[
+COMPONENT IMPORTS
+Import reusable UI components from the lib/components directory.
+Components are just .luat files that accept props and return HTML.
+--]]
+local NavItem = require("lib/components/NavItem")
+local Button = require("lib/components/Button")
+local ConfirmDialog = require("lib/components/ConfirmDialog")
+
+--[[
+HELPER FUNCTIONS
+Functions defined here can be called in the template below.
+This function checks if a URL path is currently active for nav highlighting.
+--]]
+local function isActive(path)
+    local url = props.url or "/"
+    if path == "/" then
+        return url == "/"
+    end
+    -- Check exact match OR if URL starts with path (for nested routes) 
+    return url == path or (url:sub(1, #path + 1) == path .. "/")
+end
+</script>
+
+{/*
+ALPINE.JS DATA BINDING
+x-data="darkMode" connects this element to the darkMode Alpine component
+defined in assets/js/modules/darkmode.ts. This provides reactive dark mode
+state that persists to localStorage.
+*/}
+
+{/*
+ANIMATED BACKGROUND
+These gradient "blobs" create the colorful animated background effect.
+CSS animations are defined in assets/css/app.css (.blob-1, .blob-2, .blob-3).
+The -z-10 class places them behind all content.
+We have this outside out luat-app div so that the animation can run between page
+navigations.
+*/}
+<div class="fixed inset-0 -z-10 overflow-hidden bg-gray-50 dark:bg-gray-950 transition-colors duration-300">
+    <div class="blob-1 absolute -top-40 -right-40 w-96 h-96 bg-purple-300 dark:bg-purple-500 rounded-full mix-blend-multiply dark:mix-blend-normal filter blur-3xl opacity-60 dark:opacity-50"></div>
+    <div class="blob-2 absolute -bottom-20 -left-40 w-96 h-96 bg-pink-300 dark:bg-pink-500 rounded-full mix-blend-multiply dark:mix-blend-normal filter blur-3xl opacity-60 dark:opacity-50"></div>
+    <div class="blob-3 absolute top-1/2 left-1/2 w-96 h-96 bg-blue-300 dark:bg-blue-500 rounded-full mix-blend-multiply dark:mix-blend-normal filter blur-3xl opacity-60 dark:opacity-50"></div>
+</div>
+
+<div x-data="darkMode" id="luat-app">
+    
+    {/*
+    NAVIGATION BAR
+    - sticky top-0: Stays at top when scrolling
+    - backdrop-blur-xl: Frosted glass effect
+    - view-transition-name: Enables smooth page transitions (View Transitions API)
+    */}
+    <nav class="sticky top-0 z-50 backdrop-blur-xl bg-white/10 dark:bg-gray-900/50 border-b border-white/20 dark:border-gray-700/50 px-6 py-4 transition-colors duration-300" style="view-transition-name: main-nav">
+        <div class="max-w-4xl mx-auto flex items-center gap-6">
+            {/* Logo and navigation links using the NavItem component */}
+            <NavItem href="/" active={isActive("/")} showIndicator={false}>
+                <img src="http://luat.maravillalabs.com/img/luat-logo.webp" alt="Luat" class="h-8 w-8" />
+            </NavItem>
+            <NavItem href="/" active={isActive("/")}>Home</NavItem>
+            <NavItem href="/about" active={isActive("/about")}>About</NavItem>
+            <NavItem href="/blog" active={isActive("/blog")}>Blog</NavItem>
+            <NavItem href="/todos" active={isActive("/todos")}>Todos</NavItem>
+            <div class="ml-auto flex items-center gap-4">
+                <a href="http://luat.maravillalabs.com/docs/getting-started" target="_blank" class="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors">Docs</a>
+                {/*
+                DARK MODE TOGGLE
+                @click="dark = !dark" toggles the Alpine.js dark state.
+                x-show conditionally renders sun/moon icons based on current theme.
+                */}
+                <button
+                    @click="dark = !dark"
+                    class="p-2 rounded-full bg-white/20 dark:bg-gray-800/50 hover:bg-white/40 dark:hover:bg-gray-700/50 transition-all"
+                    :title="dark ? 'Switch to light mode' : 'Switch to dark mode'"
+                >
+                    {/* Sun icon (shown in dark mode) */}
+                    <svg x-show="dark" class="w-5 h-5 text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z" clip-rule="evenodd"/>
+                    </svg>
+                    {/* Moon icon (shown in light mode) */}
+                    <svg x-show="!dark" class="w-5 h-5 text-gray-600" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </nav>
+    {/*
+    MAIN CONTENT AREA
+    {@html props.children} renders the page content from +page.luat files.
+    The @html directive tells Luat to render as raw HTML, not escaped text.
+    */}
+    <main class="max-w-4xl mx-auto px-6 py-8 min-h-[80vh]">
+        {@html props.children}
+    </main>
+    <footer class="text-center py-8 text-gray-500 dark:text-gray-400 text-sm transition-colors duration-300">
+        Built with <a href="http://luat.maravillalabs.com" target="_blank" class="text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-white transition-colors">Luat</a>
+        &middot;
+        <a href="http://luat.maravillalabs.com/docs/getting-started" target="_blank" class="text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-white transition-colors">Documentation</a>
+    </footer>
+
+    {/* Custom confirm dialog for htmx hx-confirm attributes */}
+    <ConfirmDialog />
+</div>

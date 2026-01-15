@@ -1,0 +1,70 @@
+{/*
+================================================================================
+EDITOR CONTAINER COMPONENT (lib/components/editor/EditorContainer.luat)
+================================================================================
+The editable content area for the rich text editor.
+This is where users type and see their formatted content.
+
+USAGE:
+  (Usually not used directly - use Editor component instead)
+
+  <EditorContainer
+    content="<p>Hello</p>"
+    inputId="content"
+    toolbarId="editor-toolbar"
+    editorId="content-editor"
+  />
+
+PROPS:
+  content (string):   Initial HTML content to display
+  inputId (string):   ID for the hidden input (for form submission)
+  toolbarId (string): ID of the associated toolbar
+  editorId (string):  ID for this editor element
+
+DATA ATTRIBUTES:
+  These attributes are used by JavaScript to initialize the editor:
+  - data-editor: Marks this as an editor element (for auto-initialization)
+  - data-editor-toolbar: Points to the toolbar element ID
+  - data-editor-input: Points to the hidden input element ID
+
+HIDDEN INPUT:
+  The <input type="hidden"> stores the HTML content as a string.
+  When the form is submitted, this value is sent to the server.
+  JavaScript updates this input whenever the editor content changes.
+
+STYLING:
+  - Glassmorphism background matching the app theme
+  - Dark mode support
+  - Rounded bottom corners (toolbar has top corners)
+  - Minimum height for comfortable editing
+================================================================================
+*/}
+
+<script>
+-- Extract props with defaults  
+local content = props.content or ""
+local inputId = props.inputId or "content"
+local toolbarId = props.toolbarId or "editor-toolbar"
+local editorId = props.editorId or "content-editor"
+</script>
+
+{/*
+EDITOR CONTAINER
+The [data-editor] attribute signals to JavaScript that this element
+should be turned into a Tiptap editor instance.
+*/}
+<div   
+    id="{editorId}"
+    data-editor
+    data-editor-toolbar="{toolbarId}"
+    data-editor-input="{inputId}"
+    class="border border-white/40  dark:border-gray-600/50 rounded-b-xl bg-white/50 dark:bg-gray-700/50 min-h-[250px] text-gray-900 dark:text-white transition-colors"
+>{@html content}</div>
+
+{/*
+HIDDEN INPUT FOR FORM SUBMISSION
+This input holds the HTML content as a string value.
+JavaScript syncs editor content here on every change.
+When the form submits, this value is sent as form data.
+*/}
+<input type="hidden" id="{inputId}" name="{inputId}" value="{content}" />

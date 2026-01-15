@@ -1,0 +1,44 @@
+{/*
+================================================================================
+HEADING COMPONENT (lib/components/Heading.luat)
+================================================================================
+A page heading component with optional description.
+Use at the top of pages for consistent title styling.
+
+USAGE:
+  <Heading title="About" />
+  <Heading
+    title="Blog"
+    description="Latest articles and tutorials"
+  />
+
+PROPS:
+  title (string):       The main heading text (default: "Page Title")
+  description (string): Optional subtitle/description
+
+WHEN TO USE:
+  - Simple pages that just need a title
+  - Pages without action buttons
+
+For pages with action buttons (like "New Post"), use PageHeader instead.
+
+STYLING:
+  - Extra-light font weight for modern look
+  - Large h1 for prominence
+  - Muted description text
+  - Dark mode transitions
+================================================================================
+*/}
+
+<script>
+local title = props.title or "Page Title"
+local description = props.description
+</script>
+
+{/* Page heading with optional description */}
+<div class="mb-10">
+    <h1 class="text-5xl font-extralight text-gray-800 dark:text-white mb-4 transition-colors">{title}</h1>
+    {#if description}
+        <p class="text-lg text-gray-600 dark:text-gray-300 font-light transition-colors">{description}</p>
+    {/if}
+</div>

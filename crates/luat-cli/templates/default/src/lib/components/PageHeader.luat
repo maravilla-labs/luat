@@ -1,0 +1,70 @@
+{/*
+================================================================================
+PAGE HEADER COMPONENT (lib/components/PageHeader.luat)
+================================================================================
+A page header with title, description, and optional action button.
+Use for pages that have a primary action like "New Post" or "Add Todo".
+
+USAGE:
+  <PageHeader
+    title="Blog"
+    description="Share your thoughts"
+    actionText="New Post"
+    actionHref="/blog/new"
+  />
+
+PROPS:
+  title (string):       The main heading text (default: "Page Title")
+  description (string): Optional subtitle/description
+  actionText (string):  Button text (e.g., "New Post")
+  actionHref (string):  Button link destination
+
+LAYOUT:
+  Uses flexbox to position title on the left and action button on the right.
+  The button only appears if both actionText AND actionHref are provided.
+
+COMPONENT COMPOSITION:
+  This component imports and uses the Button component, demonstrating
+  how components can be composed together in Luat.
+
+WHEN TO USE:
+  - Blog listing page with "New Post" button
+  - Todo page with "Add Todo" button
+  - Settings pages with "Save" or "Edit" actions
+
+For simple pages without actions, use Heading component instead.
+================================================================================
+*/}
+
+<script>
+-- Import the Button component for the action button 
+local Button = require("lib/components/Button")
+
+-- Extract props with defaults 
+local title = props.title or "Page Title"
+local description = props.description
+local actionText = props.actionText
+local actionHref = props.actionHref
+</script>
+
+{/*
+Header layout with flex positioning.
+justify-between pushes title left and button right.
+items-center vertically aligns them.
+*/}
+<div class="flex items-center justify-between mb-10">
+    <div>
+        <h1 class="text-5xl font-extralight text-gray-800 dark:text-white mb-2 transition-colors">{title}</h1>
+        {#if description}
+            <p class="text-lg text-gray-600 dark:text-gray-300 font-light transition-colors">{description}</p>
+        {/if}
+    </div>
+    {/*
+    ACTION BUTTON
+    Only rendered if both actionText and actionHref are provided.
+    Uses the secondary variant for a subtle but visible button.
+    */}
+    {#if actionText and actionHref}
+        <Button variant="secondary" href="{actionHref}">{actionText}</Button>
+    {/if}
+</div>

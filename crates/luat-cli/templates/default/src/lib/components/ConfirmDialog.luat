@@ -1,0 +1,74 @@
+{/*
+================================================================================
+CONFIRM DIALOG COMPONENT (lib/components/ConfirmDialog.luat)
+================================================================================
+A custom styled confirmation dialog that replaces the browser's native confirm.
+Works with htmx hx-confirm attributes via assets/js/modules/confirm.ts.
+
+USAGE:
+  <ConfirmDialog />
+
+  Then use hx-confirm="Your message" on any htmx-enabled element.
+  The JS module will intercept and show this styled dialog instead.
+
+FEATURES:
+  - Glassmorphism styling matching app theme
+  - Dark mode support
+  - Click outside to cancel
+  - Accessible via native <dialog> element
+  - Backdrop blur effect
+
+PROPS:
+  title (string):       Dialog title (default: "Confirm Delete")
+  confirmText (string): Confirm button text (default: "Delete")
+  cancelText (string):  Cancel button text (default: "Cancel")
+
+IMPLEMENTATION:
+  The dialog is controlled by assets/js/modules/confirm.ts which:
+  1. Listens for htmx:confirm events
+  2. Prevents the native browser confirm
+  3. Shows this dialog with the message from hx-confirm
+  4. Calls issueRequest(true) on confirm or closes on cancel
+================================================================================
+*/}
+
+<script>
+-- Extract props with defaults
+local title = props.title or "Confirm Delete"
+local confirmText = props.confirmText or "Delete"
+local cancelText = props.cancelText or "Cancel"
+</script>
+
+{/*
+Native HTML <dialog> element provides:
+- Modal behavior with showModal()
+- Backdrop styling via ::backdrop (animated in assets/css/app.css)
+- Keyboard handling (Escape to close)
+- Focus trapping
+
+ANIMATIONS (defined in assets/css/app.css):
+  Opening: backdrop fades in → dialog pops in with iOS-style bounce
+  Closing: dialog scales down → backdrop fades out
+*/}
+<dialog id="confirm-dialog" class="bg-transparent p-0 m-auto">
+    <div class="bg-white/80 dark:bg-gray-800/90 backdrop-blur-xl p-6 rounded-2xl border border-white/40 dark:border-gray-700/50 shadow-2xl max-w-md">
+        <h3 class="text-xl font-medium text-gray-800 dark:text-white mb-2">{title}</h3>
+        <p id="confirm-message" class="text-gray-600 dark:text-gray-300 mb-6"></p>
+        <div class="flex justify-end gap-3">
+            <button
+                id="confirm-cancel"
+                class="px-4 py-2 bg-white/50 dark:bg-gray-700/50 text-gray-700 dark:text-gray-300 rounded-full hover:bg-white/70 dark:hover:bg-gray-600/50 transition-all focus:ring-0 focus:outline-1 focus:outline-offset-4 focus:outline-solid focus:outline-white/50"
+            >
+                {cancelText}
+            </button>
+            <button
+                id="confirm-ok"
+                class="px-4 py-2 bg-red-500/80 text-white rounded-full hover:bg-red-600 transition-all
+                focus:ring-0 focus:outline-1 focus:outline-offset-4 focus:outline-solid focus:outline-white/50
+                "
+            >
+                {confirmText}
+            </button>
+        </div>
+    </div>
+</dialog>

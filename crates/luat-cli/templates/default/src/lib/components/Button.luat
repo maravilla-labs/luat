@@ -1,0 +1,115 @@
+{/*
+================================================================================
+BUTTON COMPONENT (lib/components/Button.luat)
+================================================================================
+A polymorphic button component that can render as a <button> or <a> tag.
+This demonstrates how to build flexible, reusable components in Luat.
+
+USAGE:
+  <Button>Click me</Button>                        -- Primary button
+  <Button variant="secondary">Cancel</Button>     -- Secondary style
+  <Button href="/about">Go to About</Button>      -- Renders as <a> link
+  <Button variant="danger" type="submit">Delete</Button>
+
+PROPS:
+  variant (string):   Style variant - "primary" (default), "secondary",
+                      "tertiary", "danger", "ghost", "icon", "circle", "link"
+  size (string):      Size - "sm", "md" (default), "lg"
+  href (string):      If provided, renders as <a> instead of <button>
+  type (string):      Button type - "button" (default), "submit", "reset"
+  class (string):     Additional CSS classes to apply
+
+COMPONENT PATTERN:
+  This component shows several Luat patterns:
+  1. Default props: props.variant or "primary"
+  2. Conditional classes: Using a table with boolean values
+  3. Polymorphic rendering: <a> vs <button> based on href prop
+  4. Children rendering: {@render props.children?.()}
+================================================================================
+*/}
+
+<script>
+-- Extract props with defaults 
+local variant = props.variant or "primary"
+local size = props.size or "md"
+local href = props.href
+local buttonType = props.type or "button"
+local customClass = props.class or ""
+
+--[[
+SIZE CLASSES
+Defines padding and text size for each size variant.
+The size prop maps to these Tailwind classes.
+--]]
+local sizeClasses = {
+    sm = "px-4 py-2 text-sm",
+    md = "px-5 py-2.5",
+    lg = "px-6 py-3"
+}
+
+--[[
+SPECIAL VARIANTS
+Some variants (icon, ghost, circle, link) don't use base or size classes
+because they have completely custom styling.
+--]]
+local noBaseVariants = { icon = true, ghost = true, circle = true, link = true }
+
+--[[
+CONDITIONAL CLASSES TABLE
+In Luat, you can pass a table to class={} where:
+  - Keys are class strings
+  - Values are booleans (true = include, false = exclude)
+
+This is similar to clsx/classnames libraries in JavaScript.
+--]]
+local classes = {
+    -- Base classes (applied to most variants)
+    ["font-medium rounded-full focus:outline-none"] = not noBaseVariants[variant],
+
+    -- Size classes (applied to most variants)
+    [sizeClasses[size] or sizeClasses.md] = not noBaseVariants[variant],
+
+    -- PRIMARY: Gradient purple-pink with shadow 
+    ["bg-gradient-to-r from-purple-500 to-pink-500 text-white hover:from-purple-600 hover:to-pink-600 focus:ring-2 focus:ring-purple-400 focus:ring-offset-2 shadow-lg transition-all"] = variant == "primary",
+
+    -- SECONDARY: Frosted glass effect
+    ["bg-white/30 dark:bg-gray-800/50 backdrop-blur-lg text-gray-700 dark:text-gray-200 border border-white/40 dark:border-gray-700/50 hover:bg-white/50 dark:hover:bg-gray-700/50 shadow-lg transition-all"] = variant == "secondary",
+
+    -- TERTIARY: Subtle background
+    ["bg-white/50 dark:bg-gray-700/50 text-gray-700 dark:text-gray-200 border border-white/40 dark:border-gray-600/50 hover:bg-white/70 dark:hover:bg-gray-600/50 transition-all"] = variant == "tertiary",
+
+    -- DANGER: Red for destructive actions 
+    ["bg-red-500/80 backdrop-blur text-white hover:bg-red-600 focus:ring-2 focus:ring-red-400 focus:ring-offset-2 transition-all"] = variant == "danger",
+
+    -- GHOST: Text only, no background
+    ["text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors"] = variant == "ghost",
+
+    -- ICON: Square button for icons 
+    ["p-2 rounded-lg hover:bg-white/50 dark:hover:bg-gray-700/50 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-all focus:outline-none"] = variant == "icon",
+
+    -- CIRCLE: Round button (e.g., dark mode toggle)
+    ["p-2 rounded-full bg-white/20 dark:bg-gray-800/50 hover:bg-white/40 dark:hover:bg-gray-700/50 transition-all focus:outline-none"] = variant == "circle",
+
+    -- LINK: Text link style
+    ["inline-flex items-center text-purple-500 dark:text-purple-400 hover:text-purple-600 dark:hover:text-purple-300 font-medium transition-colors"] = variant == "link",
+
+    -- Custom classes passed via props 
+    [customClass] = customClass ~= ""
+}
+</script>
+
+{/*
+POLYMORPHIC RENDERING
+If href is provided, render as an anchor tag for navigation.
+Otherwise, render as a button for actions.
+This pattern allows one component to handle both use cases.
+*/}
+{#if href}
+    <a href="{href}" class={classes}>
+        {@render props.children?.()}
+    </a>
+{:else}
+    <button type="{buttonType}" class={classes}>
+        {@render props.children?.()}
+    </button>
+{/if}

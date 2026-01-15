@@ -1,0 +1,110 @@
+{/*
+================================================================================
+NEW BLOG POST PAGE (routes/blog/new/+page.luat)
+================================================================================
+Form for creating a new blog post with title, image, excerpt, and rich content.
+Demonstrates HTMX form submission and the rich text editor component.
+
+URL: /blog/new
+
+FORM HANDLING:
+  - hx-post="/blog/new?/default" - Submits to the "default" action
+  - hx-target="#create-result" - Updates this element with response
+  - hx-swap="innerHTML" - Replaces inner content (for error messages)
+
+FORM FIELDS:
+  - title (required): Post title
+  - image_url: Optional cover image URL
+  - excerpt: Short description for blog list
+  - content: Rich HTML content from the Editor component
+
+EDITOR COMPONENT:
+  The <Editor> component provides a WYSIWYG editing experience.
+  It includes a hidden input that stores the HTML content.
+  When the form submits, this hidden input value is sent as "content".
+
+AFTER SUBMISSION:
+  On success, the server returns an HX-Redirect header that tells
+  HTMX to navigate to the new post page.
+================================================================================
+*/}
+<script>
+-- Import components 
+local Button = require("lib/components/Button")
+local Editor = require("lib/components/editor/Editor")
+</script>
+
+{/* Page heading */}
+<h1 class="text-4xl font-extralight text-gray-800 dark:text-white mb-8 transition-colors">Create New Post</h1>
+
+{/*
+RESULT CONTAINER
+HTMX will insert error messages or success feedback here.
+*/}
+<div id="create-result"></div>
+
+{/* 
+BLOG POST FORM  
+hx-post sends form data via AJAX to the server action.
+The ?/default suffix calls the "default" action in +page.server.lua.
+*/}
+<form
+    method="POST"
+    hx-post="/blog/new?/default"
+    hx-target="#create-result"
+    hx-swap="innerHTML"
+    class="space-y-6 bg-white/30 dark:bg-gray-800/50 backdrop-blur-xl p-8 rounded-3xl border border-white/40 dark:border-gray-700/50 shadow-2xl shadow-black/10 transition-colors"
+>
+    {/* Title field - required */}
+    <div>
+        <label for="title" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 transition-colors">Title</label>
+        <input
+            type="text"
+            id="title"
+            name="title"
+            required
+            class="w-full px-4 py-3 bg-white/50 dark:bg-gray-700/50 border border-white/40 dark:border-gray-600/50 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-400 focus:bg-white/70 dark:focus:bg-gray-600/50 text-gray-900 dark:text-white transition-all"
+        />
+    </div>
+
+    {/* Cover image URL - optional */}
+    <div>
+        <label for="image_url" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 transition-colors">Cover Image URL</label>
+        <input
+            type="url"
+            id="image_url"
+            name="image_url"
+            class="w-full px-4 py-3 bg-white/50 dark:bg-gray-700/50 border border-white/40 dark:border-gray-600/50 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-400 focus:bg-white/70 dark:focus:bg-gray-600/50 text-gray-900 dark:text-white transition-all"
+            placeholder="https://example.com/image.jpg"
+        />
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-2 transition-colors">Optional: Add a cover image for your post</p>
+    </div>
+
+    {/* Excerpt - short description */}
+    <div>
+        <label for="excerpt" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 transition-colors">Excerpt</label>
+        <input
+            type="text"
+            id="excerpt"
+            name="excerpt"
+            class="w-full px-4 py-3 bg-white/50 dark:bg-gray-700/50 border border-white/40 dark:border-gray-600/50 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-400 focus:bg-white/70 dark:focus:bg-gray-600/50 text-gray-900 dark:text-white transition-all"
+            placeholder="Brief description for the blog list"
+        />
+    </div>
+
+    {/*
+    RICH TEXT EDITOR
+    The Editor component creates a toolbar + editable area.
+    Content is stored in a hidden input with name="content".
+    */}
+    <div>
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 transition-colors">Content</label>
+        <Editor content="" inputId="content" />
+    </div>
+
+    {/* Form actions */}
+    <div class="flex items-center gap-4 pt-4">
+        <Button type="submit" size="lg">Create Post</Button>
+        <Button variant="ghost" href="/blog">Cancel</Button>
+    </div>
+</form>

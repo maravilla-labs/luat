@@ -1,0 +1,158 @@
+{/*
+================================================================================
+TODO ITEM COMPONENT (lib/components/TodoItem.luat)
+================================================================================
+An interactive list item for the todo application.
+Demonstrates HTMX integration for dynamic updates without page reloads.
+
+USAGE:
+  <TodoItem todo={todo} />
+
+PROPS:
+  todo (table): Todo object with fields:
+    - id: Unique identifier
+    - text: The todo text
+    - completed: Boolean completion state
+
+FEATURES:
+  - Toggle completion: Click checkbox or press Space
+  - Edit text: Double-click or press Enter/F2
+  - Delete: Click X button or press Delete/Backspace
+  - Keyboard navigation: Arrow keys (handled by parent)
+
+HTMX INTEGRATION:
+  This component showcases HTMX attributes for dynamic behavior:
+  - hx-post: Send POST request to server action
+  - hx-target: Which element to update with response
+  - hx-swap: How to update (outerHTML replaces entire element)
+  - hx-trigger: Events that trigger the request
+  - hx-vals: JSON data to send with request
+
+ACCESSIBILITY:
+  - role="listitem" for semantic structure
+  - aria-label for screen readers
+  - aria-pressed for toggle button state
+  - Keyboard shortcuts documented in labels
+================================================================================
+*/}
+
+<script>
+    local todo = props.todo
+
+    --[[
+    DYNAMIC CLASS BUILDING
+    Classes change based on todo.completed state.
+    Completed items have muted styling and strikethrough text.
+    --]]
+    local liClass = "group flex items-center px-5 py-4 transition-all focus-within:bg-white/20 dark:focus-within:bg-gray-700/30"
+    if todo.completed then
+        liClass = liClass .. " bg-white/5 dark:bg-gray-800/30"
+    end
+
+    -- Checkbox styling: green when completed, gray when active
+    local checkClass = "w-7 h-7 rounded-full border-2 flex items-center justify-center flex-shrink-0 focus:outline-none transition-all"
+    if todo.completed then
+        checkClass = checkClass .. " border-emerald-400/70 dark:border-emerald-500/70 bg-emerald-400/20 dark:bg-emerald-500/20"
+    else
+        checkClass = checkClass .. " border-gray-400/50 dark:border-gray-500/50 hover:border-gray-500/70 dark:hover:border-gray-400/70 hover:bg-white/20 dark:hover:bg-gray-700/30"
+    end
+
+    -- Text styling: strikethrough and muted when completed
+    local textClass = "flex-1 ml-4 text-lg cursor-pointer rounded px-1 focus:outline-none transition-colors"
+    if todo.completed then
+        textClass = textClass .. " line-through text-gray-400/70 dark:text-gray-500"
+    else
+        textClass = textClass .. " text-gray-700 dark:text-gray-200"
+    end
+
+    -- Accessibility labels for screen readers
+    local completedText = "not completed"
+    if todo.completed then
+        completedText = "completed"
+    end
+
+    local toggleLabel = "Mark as completed"
+    if todo.completed then
+        toggleLabel = "Mark as not completed"
+    end
+
+    local ariaPressed = "false"
+    if todo.completed then
+        ariaPressed = "true"
+    end
+</script>
+
+{/*
+TODO LIST ITEM
+The id is important for HTMX targeting - responses replace this specific element.
+tabindex="0" makes the item focusable for keyboard navigation.
+data-todo-id is used by JavaScript for FLIP animations.
+*/}
+<li
+    id="todo-{todo.id}"
+    class="{liClass}"
+    tabindex="0"
+    role="listitem"
+    aria-label="{todo.text}, {completedText}"
+    data-todo-id="{todo.id}"
+>
+    {/*
+    TOGGLE BUTTON
+    hx-post="/todos?/toggle" calls the toggle action in +page.server.lua
+    hx-trigger responds to click OR Space key on the parent li
+    hx-vals sends the todo ID as JSON data
+    */}
+    <button
+        type="button"
+        hx-post="/todos?/toggle"
+        hx-target="#todo-{todo.id}"
+        hx-swap="outerHTML"
+        hx-select="unset"
+        hx-trigger="click, keyup[key==' '] from:closest li"
+        hx-vals={json.encode({id = todo.id})}
+        class="{checkClass}"
+        aria-label="{toggleLabel}"
+        aria-pressed="{ariaPressed}"
+        tabindex="-1"
+    >
+        {#if todo.completed}
+            <span class="text-emerald-500 dark:text-emerald-400 text-sm" aria-hidden="true">&#10003;</span>
+        {/if}
+    </button>
+    {/*
+    TODO TEXT / EDIT TRIGGER
+    Double-click or Enter/F2 opens the edit form.
+    hx-get fetches the edit form HTML from the server.
+    */}
+    <span
+        class="{textClass}"
+        hx-get="/todos?/editForm&id={todo.id}"
+        hx-trigger="dblclick, keyup[key=='Enter'] from:closest li, keyup[key=='F2'] from:closest li"
+        hx-target="#todo-{todo.id}"
+        hx-swap="outerHTML"
+        tabindex="-1"
+        role="button"
+        aria-label="Edit todo, double-click or press Enter"
+    >
+        {todo.text}
+    </span>
+    {/*
+    DELETE BUTTON
+    Hidden by default (opacity-0), appears on hover or focus.
+    Responds to click or Delete/Backspace keys.
+    */}
+    <button
+        type="button"
+        hx-post="/todos?/delete"
+        hx-target="#todo-{todo.id}"
+        hx-swap="outerHTML"
+        hx-trigger="click, keyup[key=='Delete'], keyup[key=='Backspace'] from:closest li"
+        hx-vals={json.encode({id = todo.id})}
+        class="opacity-0 group-hover:opacity-100 focus:opacity-100 text-gray-400/70 dark:text-gray-500 hover:text-red-400 dark:hover:text-red-400 text-xl ml-3 transition-all flex-shrink-0 focus:outline-none"
+        title="Delete todo"
+        aria-label="Delete {todo.text}"
+        tabindex="-1"
+    >
+        <span aria-hidden="true">&times;</span>
+    </button>
+</li>

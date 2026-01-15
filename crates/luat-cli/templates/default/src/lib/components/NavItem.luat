@@ -1,0 +1,64 @@
+{/*
+================================================================================
+NAVIGATION ITEM COMPONENT (lib/components/NavItem.luat)
+================================================================================
+A navigation link with active state indicator.
+Used in the main navigation bar to show which page is currently active.
+
+USAGE:
+  <NavItem href="/about" active={isActive("/about")}>About</NavItem>
+  <NavItem href="/" active={isActive("/")} showIndicator={false}>
+    <img src="logo.png" alt="Logo" />
+  </NavItem>
+
+PROPS:
+  href (string):         Link destination (default: "/")
+  active (boolean):      Whether this item is currently active (default: false)
+  showIndicator (bool):  Whether to show the dot/underline indicator (default: true)
+
+ACTIVE STATE INDICATORS:
+  When active=true and showIndicator=true, two visual indicators appear:
+  - nav-dot: Small colored dot above the link
+  - nav-underline: Colored line below the link
+
+  These are animated via CSS in assets/css/app.css using View Transitions.
+
+CONDITIONAL CLASSES:
+  The classes table demonstrates conditional class assignment:
+  - Active items: Bold text, dark color
+  - Inactive items: Gray text with hover effect
+================================================================================
+*/}
+
+<script>
+-- Extract props with defaults
+local href = props.href or "/"
+local active = props.active or false
+local showIndicator = props.showIndicator ~= false  -- Default to true unless explicitly false
+
+--[[
+CONDITIONAL CLASSES
+Table where keys are class strings and values are booleans.
+Only classes with true values are applied.
+--]]
+local classes = {
+    ["relative transition-colors"] = true,  -- Always applied
+    ["text-gray-800 dark:text-white font-medium"] = active,  -- Active state
+    ["text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"] = not active,  -- Inactive state
+}
+</script>
+
+<a href={href} class={classes}>
+    {/*
+    ACTIVE INDICATORS
+    Only shown when both active=true AND showIndicator=true.
+    The nav-dot and nav-underline classes are styled in CSS.
+    View Transitions API animates these between page navigations.
+    */}
+    {#if active and showIndicator}
+        <span class="nav-dot absolute -top-1 -left-1.5"></span>
+        <span class="nav-underline absolute -bottom-1 left-0 right-0 h-0.5 rounded-full"></span>
+    {/if}
+    {/* Render link content (text or elements like logo image) */}
+    {@render props.children?.()}
+</a>

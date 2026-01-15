@@ -1,0 +1,11 @@
+<nav class="bg-slate-900 px-8 py-4 flex gap-6">
+    <a href="/" class="text-white font-medium hover:text-blue-400 transition-colors">Home</a>
+    <a href="/about" class="text-white font-medium hover:text-blue-400 transition-colors">About</a>
+    <a href="/blog" class="text-white font-medium hover:text-blue-400 transition-colors">Blog</a>
+</nav>
+<main class="max-w-3xl mx-auto px-4 py-8">
+    {@html props.children}
+</main>
+<footer class="text-center py-8 text-gray-500 text-sm border-t border-gray-200 mt-12">
+    Built with Luat + Tailwind CSS
+</footer>

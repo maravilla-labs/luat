@@ -1,0 +1,19 @@
+# Build output
+dist/
+*.bin
+
+# Dependencies
+node_modules/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# Luat
+.luat/
+public/css/app.css
+public/js/app.js

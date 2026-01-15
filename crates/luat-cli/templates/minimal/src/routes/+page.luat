@@ -1,0 +1,13 @@
+<div class="max-w-2xl mx-auto px-6 py-16">
+    <div class="text-center mb-12">
+        <img src="http://luat.maravillalabs.com/img/luat-logo.webp" alt="Luat" class="w-24 h-24 mx-auto mb-6" />
+        <h1 class="text-4xl font-bold text-gray-900 mb-4">{props.title}</h1>
+        <p class="text-lg text-gray-600">Edit <code class="bg-gray-100 px-2 py-1 rounded text-sm">src/routes/+page.luat</code> to get started.</p>
+    </div>
+
+    <div class="text-center">
+        <a href="http://luat.maravillalabs.com/docs/getting-started" target="_blank" class="text-blue-600 hover:text-blue-800">
+            Documentation →
+        </a>
+    </div>
+</div>

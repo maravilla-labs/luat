@@ -1,0 +1,69 @@
+[package]
+name = "luat"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Svelte-inspired server-side Lua templating engine for Rust"
+readme = "../../README.md"
+keywords = ["template", "lua", "svelte", "ssr", "html"]
+categories = ["template-engine", "web-programming"]
+
+# Note: For WASM, build the luat-wasm-tests binary instead of the library directly
+[lib]
+crate-type = ["rlib"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+default = ["native"]
+native = ["send", "async-lua", "filesystem"]
+wasm = []
+
+# Individual features for fine-grained control
+send = ["mlua/send"]
+async-lua = ["mlua/async"]
+filesystem = []
+
+[dependencies]
+# mlua with base features - async and send are feature-gated
+mlua = { version = "0.10.5", features = ["lua54", "vendored", "serialize"] }
+mlua-json = { workspace = true }
+nom = { workspace = true }
+nom_locate = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+regex = { workspace = true }
+lazy_static = { workspace = true }
+lru = { workspace = true }
+pest = { workspace = true }
+pest_derive = { workspace = true }
+pest_meta = { workspace = true }
+sha2 = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+matchit = { workspace = true }
+form_urlencoded = "1.2"
+
+[dev-dependencies]
+tempfile = "3.5"
+axum = { version = "0.7.4", features = ["macros"] }
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.5", features = ["fs"] }
+nanoid = "0.4"
+glob = { workspace = true }
+globset = { workspace = true }
+clap = { workspace = true }
+
+# WASM-specific dependencies
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+serde-wasm-bindgen = "0.6"
+console_error_panic_hook = { version = "0.1", optional = true }

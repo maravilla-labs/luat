@@ -1,0 +1,139 @@
+// Lua 5.3 Grammar - Modified to avoid conflicts with grammar.pest
+// Converted BNF from https://q-syshelp.qsc.com/Content/Control_Scripting/Lua_5.3_Reference_Manual/9_-_The_Complete_Syntax_of_Lua.htm
+
+// Lexical elements
+LUA_WHITESPACE = _{ " " | "\t" | "\n" | "\r" | "\r\n" }
+
+LUA_COMMENT = {
+    "--" ~ (!NEWLINE ~ ANY)* |
+    "--[[" ~ (!"]]" ~ ANY)* ~ "]]"
+}
+
+lua_ident = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+
+lua_reserved_word = {
+    "and" | "break" | "do" | "else" | "elseif" | "end" | "false" | "for" |
+    "function" | "goto" | "if" | "in" | "local" | "nil" | "not" | "or" |
+    "repeat" | "return" | "then" | "true" | "until" | "while"
+}
+
+// Numbers
+dec_digit = { '0'..'9' }
+hex_digit = { '0'..'9' | 'a'..'f' | 'A'..'F' }
+
+lua_int = @{ dec_digit+ }
+lua_hex = @{ ("0x" | "0X") ~ hex_digit+ }
+lua_float = @{ 
+    dec_digit+ ~ "." ~ dec_digit* ~ (("e" | "E") ~ ("+" | "-")? ~ dec_digit+)? |
+    dec_digit+ ~ ("e" | "E") ~ ("+" | "-")? ~ dec_digit+ |
+    "." ~ dec_digit+ ~ (("e" | "E") ~ ("+" | "-")? ~ dec_digit+)?
+}
+lua_hex_float = @{
+    ("0x" | "0X") ~ hex_digit+ ~ "." ~ hex_digit* ~ (("p" | "P") ~ ("+" | "-")? ~ dec_digit+)? |
+    ("0x" | "0X") ~ "." ~ hex_digit+ ~ (("p" | "P") ~ ("+" | "-")? ~ dec_digit+)? |
+    ("0x" | "0X") ~ hex_digit+ ~ ("p" | "P") ~ ("+" | "-")? ~ dec_digit+
+}
+lua_number = @{ lua_hex_float | lua_hex | lua_float | lua_int }
+
+// Strings
+lua_normal_string = @{ "\"" ~ (escape_sequence | (!("\"" | "\\") ~ ANY))* ~ "\"" }
+lua_char_string = @{ "'" ~ (escape_sequence | (!("'" | "\\") ~ ANY))* ~ "'" }
+lua_long_string = @{ "[[" ~ (!"]]" ~ ANY)* ~ "]]" | "[=" ~ (!("]=") ~ ANY)* ~ "=]" }
+
+escape_sequence = @{
+    "\\" ~ ("a" | "b" | "f" | "n" | "r" | "t" | "v" | "\\" | "\"" | "'" | "[" | "]") |
+    "\\" ~ dec_digit{1,3} |
+    "\\x" ~ hex_digit{2} |
+    "\\u{" ~ hex_digit{1,6} ~ "}"
+}
+
+lua_string = { lua_normal_string | lua_char_string | lua_long_string }
+
+// Operators
+lua_binop = {
+    "+" | "-" | "*" | "/" | "//" | "^" | "%" |
+    "&" | "~" | "|" | ">>" | "<<" | ".." |
+    "<" | "<=" | ">" | ">=" | "==" | "~=" |
+    "and" | "or"
+}
+
+lua_unop = { "-" | "not" | "#" | "~" }
+
+// Grammar
+lua_chunk = { lua_block ~ EOI }
+
+lua_block = { lua_stat* ~ lua_retstat? }
+
+lua_stat = {
+    ";" |
+    lua_varlist ~ "=" ~ lua_explist |
+    lua_func_call |
+    lua_label |
+    "break" |
+    "goto" ~ lua_ident |
+    "do" ~ lua_block ~ "end" |
+    "while" ~ lua_exp ~ "do" ~ lua_block ~ "end" |
+    "repeat" ~ lua_block ~ "until" ~ lua_exp |
+    "if" ~ lua_exp ~ "then" ~ lua_block ~ ("elseif" ~ lua_exp ~ "then" ~ lua_block)* ~ ("else" ~ lua_block)? ~ "end" |
+    "for" ~ lua_ident ~ "=" ~ lua_exp ~ "," ~ lua_exp ~ ("," ~ lua_exp)? ~ "do" ~ lua_block ~ "end" |
+    "for" ~ lua_namelist ~ "in" ~ lua_explist ~ "do" ~ lua_block ~ "end" |
+    "function" ~ lua_funcname ~ lua_funcbody |
+    "local" ~ "function" ~ lua_ident ~ lua_funcbody |
+    "local" ~ lua_namelist ~ ("=" ~ lua_explist)?
+}
+
+lua_retstat = { "return" ~ lua_explist? ~ ";"? }
+
+lua_label = { "::" ~ lua_ident ~ "::" }
+
+lua_funcname = { lua_ident ~ ("." ~ lua_ident)* ~ (":" ~ lua_ident)? }
+
+lua_varlist = { lua_var ~ ("," ~ lua_var)* }
+
+lua_namelist = { lua_ident ~ ("," ~ lua_ident)* }
+
+lua_explist = { lua_exp ~ ("," ~ lua_exp)* }
+
+// Fix left recursion using non-recursive definitions
+lua_term = { "nil" | "false" | "true" | lua_number | lua_string | "..." | lua_functiondef | 
+    lua_primary | lua_tableconstructor | luat_ext_magic_function }
+
+lua_exp = { lua_term ~ (lua_binop ~ lua_term)* | lua_unop ~ lua_exp }
+
+// Non-recursive version of lua_var
+lua_var_simple = { lua_ident }
+lua_var_indexed = { lua_primary ~ "[" ~ lua_exp ~ "]" }
+lua_var_member = { lua_primary ~ "." ~ lua_ident }
+lua_var = { lua_var_simple | lua_var_indexed | lua_var_member }
+
+// Primary expressions - no recursion
+lua_primary = { lua_var_simple | "(" ~ lua_exp ~ ")" }
+
+// Non-recursive function call
+lua_func_call = { (lua_var_simple | "(" ~ lua_exp ~ ")") ~ lua_args | (lua_var_simple | "(" ~ lua_exp ~ ")") ~ ":" ~ lua_ident ~ lua_args }
+
+lua_args = {
+    "(" ~ lua_explist? ~ ")" |
+    lua_tableconstructor |
+    lua_string
+}
+
+lua_functiondef = { "function" ~ lua_funcbody }
+
+lua_funcbody = { "(" ~ lua_parlist? ~ ")" ~ lua_block ~ "end" }
+
+lua_parlist = { lua_namelist ~ ("," ~ "...")? | "..." }
+
+lua_tableconstructor = { "{" ~ lua_fieldlist? ~ "}" }
+
+lua_fieldlist = { lua_field ~ (lua_fieldsep ~ lua_field)* ~ lua_fieldsep? }
+
+lua_field = { "[" ~ lua_exp ~ "]" ~ "=" ~ lua_exp | lua_ident ~ "=" ~ lua_exp | lua_exp }
+
+lua_fieldsep = { "," | ";" }
+
+// The script_lua rule is no longer used since we directly extract the script content
+
+// LUAT Extensions - Magic function syntax $functionname(args) or $functionname(args, defaultValue)
+luat_magic_function = { "$" ~ lua_ident ~ lua_magic_args }
+lua_magic_args = { "(" ~ lua_exp ~ ("," ~ lua_exp)? ~ ")" | "(" ~ ")" }

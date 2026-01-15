@@ -1,0 +1,41 @@
+{/*
+================================================================================
+TODO LIST ALL FRAGMENT (routes/todos/(fragments)/all.luat)
+================================================================================
+Returns all todo items regardless of completion status.
+Used when clicking "All" filter or after bulk operations.
+
+TRIGGERED BY:
+  - GET /todos?/all (filter click)
+  - POST /todos?/toggleAll (after toggle all action)
+
+RESPONSE:
+  - All TodoItem components for the current todos
+  - Out-of-band count update for the footer
+
+This fragment renders the complete list, replacing the entire
+todo-list content when filtering to "All" view.
+================================================================================
+*/}
+
+<script>
+    local TodoItem = require("lib/components/TodoItem")
+
+    -- Handle singular/plural for "item" text 
+    local itemsText = "items"
+    if props.counts and props.counts.active == 1 then
+        itemsText = "item"
+    end
+</script>
+
+{/* Render all todos */}
+{#each props.todos as todo}
+    <TodoItem todo={todo} />
+{/each}
+
+{/* Out-of-band count update */}
+{#if props.counts}
+    <span id="todo-count" hx-swap-oob="true">
+        <strong>{props.counts.active}</strong> {itemsText} left
+    </span>
+{/if}

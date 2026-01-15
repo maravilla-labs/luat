@@ -1,0 +1,11 @@
+// LUAT Extensions - Magic function syntax $functionname(args) or $functionname(args, defaultValue)
+luat_ext_magic_function = { "$" ~ luat_function_name ~ luat_function_args }
+luat_function_name = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+luat_function_args = { "(" ~ luat_function_arg ~ ("," ~ luat_function_arg)? ~ ")" | "(" ~ ")" }
+luat_function_arg = { luat_function_value }
+luat_function_value = { luat_string_literal | luat_number_literal | luat_identifier | luat_boolean_literal }
+luat_identifier = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+luat_string_literal = @{ "\"" ~ (escape_char | (!("\"" | "\\") ~ ANY))* ~ "\"" | "'" ~ (escape_char | (!("'" | "\\") ~ ANY))* ~ "'" }
+luat_number_literal = @{ "-"? ~ ("0" | ASCII_NONZERO_DIGIT ~ ASCII_DIGIT*) ~ ("." ~ ASCII_DIGIT*)? ~ (^"e" ~ ("+" | "-")? ~ ASCII_DIGIT+)? }
+luat_boolean_literal = { "true" | "false" }
+escape_char = @{ "\\" ~ ANY }

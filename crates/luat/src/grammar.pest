@@ -1,0 +1,218 @@
+// Copyright 2019-2026 Maravilla Labs, operated by SOLUTAS GmbH, Switzerland
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
+// LUAT Grammar 
+// Note: WHITESPACE is commented out to handle whitespace manually
+// WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+
+html_comment = { "<!--" ~ (mustache | comment_text)* ~ "-->" }
+comment_text = { (!("{" | "-->") ~ ANY)+ }
+
+// Multi-line comment: {/* ... */} - content is NOT parsed
+luat_comment = { "{/*" ~ luat_comment_content ~ "*/}" }
+luat_comment_content = @{ (!("*/}") ~ ANY)* }
+
+// Lua-style single-line comment: {-- ... --}
+luat_line_comment = { "{--" ~ luat_line_comment_content ~ "--}" }
+luat_line_comment_content = @{ (!("--}") ~ ANY)* }
+
+template = { SOI ~ ws* ~ template_content ~ ws* ~ EOI }
+template_content = { (script_block | template_node)* }
+template_node = {
+    each_block |
+    if_block |
+    sensitive_each_block |
+    sensitive_if_block |
+    html_comment |
+    luat_line_comment |
+    luat_comment |
+    raw_html |
+    local_const |
+    render_children |
+    mustache | 
+    script_any |
+    element_or_component_node | 
+    luat_text 
+}
+
+script_block = { script_module | script_regular }
+
+script_module = { 
+    "<script" ~ ws* ~ ("module" | ("context" ~ ws* ~ "=" ~ ws* ~ "\"module\"")) ~ ws* ~ ">" ~ 
+    script_content ~ 
+    script_end_tag
+}
+
+script_regular = { 
+    "<script>" ~ 
+    script_content ~ 
+    script_end_tag
+}
+
+// Script tag that can handle any attributes and be self-closing or have content
+script_any = { script_self_closing | script_with_content }
+
+script_self_closing = {
+    "<script" ~ script_attributes? ~ ws* ~ "/>" // Changed to use main 'attributes' rule
+}
+
+script_with_content = {
+    "<script" ~ script_attributes? ~ ws* ~ ">" ~ // Changed to use main 'attributes' rule
+    script_content ~
+    script_end_tag
+}
+
+// Flexible attributes for script tags - allows any HTML-style attributes
+// The following 'script_attributes' and 'script_attribute' rules might become
+// unused by script_any if 'attributes' is comprehensive enough.
+// If they are used by other specific script rules (like a hypothetical script_specific_attr_parser),
+// they might need to remain or be refactored. For now, script_any uses the main 'attributes'.
+script_attributes = { (ws+ ~ script_attribute)+ }
+
+script_attribute = { 
+    script_attr_name ~ 
+    (ws* ~ "=" ~ ws* ~ script_attr_value)?  // Value is optional for boolean attributes
+}
+
+script_attr_name = @{ 
+    ('a'..'z' | 'A'..'Z' | "_" | "-" | ":") ~ 
+    ('a'..'z' | 'A'..'Z' | '0'..'9' | "_" | "-" | ":" | ".")* 
+}
+
+script_attr_value = { 
+    script_double_quoted | 
+    script_single_quoted | 
+    script_unquoted 
+}
+
+script_double_quoted = { "\"" ~ (!("\"") ~ ANY)* ~ "\"" }
+script_single_quoted = { "'" ~ (!("'") ~ ANY)* ~ "'" }
+script_unquoted = @{ (!(" " | ">" | "/" | "\t" | "\n" | "\r") ~ ANY)+ }
+// Script closing tag - must be at the beginning of a line or preceded by whitespace
+// This ensures it doesn't match </script> inside string literals
+//script_end_tag = _{ (SOI | ws | NEWLINE) ~ "</script>" }
+// try this which measn we just dont support inline script 
+script_end_tag = _{ "</script>" }
+
+// Raw script content captured as a complete block between tags
+// This version treats everything between <script> and </script> as raw content
+// The negative lookahead ensures we don't include the end tag in the content
+//script_content = @{ (!script_end_tag ~ ANY)* }
+//lets try that
+script_content = @{ (!"</script>" ~ ANY)* }
+
+// Control flow blocks
+if_block = { if_start ~ ws* ~ template_node* ~ ws* ~ (else_if ~ ws* ~ template_node* ~ ws*)* ~ (else_block ~ ws* ~ template_node* ~ ws*)? ~ if_end }
+if_start = { "{#if" ~ ws+ ~ expr ~ ws* ~ "}" }
+else_if = { "{:else" ~ ws+ ~ "if" ~ ws+ ~ expr ~ ws* ~ "}" }
+else_block = { "{:else}" }
+if_end = { "{/if}" }
+
+each_block = { each_start ~ ws* ~ template_node* ~ ws* ~ (each_empty ~ ws* ~ template_node* ~ ws*)? ~ each_end }
+each_start = { "{#each" ~ ws+ ~ expr ~ ws+ ~ "as" ~ ws+ ~ ident ~ (ws* ~ "," ~ ws* ~ ident)? ~ ws* ~ "}" }
+each_empty = { "{:empty}" }
+each_end = { "{/each}" }
+
+// Sensitive blocks (with ! prefix)
+sensitive_if_block = { sensitive_if_start ~ ws* ~ template_node* ~ ws* ~ (else_if ~ ws* ~ template_node* ~ ws*)* ~ (else_block ~ ws* ~ template_node* ~ ws*)? ~ if_end }
+sensitive_if_start = { "{!if" ~ ws+ ~ expr ~ ws* ~ "}" }
+
+sensitive_each_block = { sensitive_each_start ~ ws* ~ template_node* ~ ws* ~ (each_empty ~ ws* ~ template_node* ~ ws*)? ~ each_end }
+sensitive_each_start = { "{!each" ~ ws+ ~ expr ~ ws+ ~ "as" ~ ws+ ~ ident ~ (ws* ~ "," ~ ws* ~ ident)? ~ ws* ~ "}" }
+
+// Expressions and special blocks
+mustache = { "{" ~ ws* ~ !("#" | ":" | "/" | "@" | "!") ~ expr ~ ws* ~ "}" }
+raw_html = { "{@html" ~ ws+ ~ expr ~ ws* ~ "}" }
+local_const = { "{@local" ~ ws+ ~ ident ~ ws* ~ "=" ~ ws* ~ expr ~ ws* ~ "}" }
+render_children = { "{@render" ~ ws+ ~ (!"(" ~ ANY)+ ~ ws* ~ "(" ~ ws* ~ ")" ~ ws* ~ "}" }
+optional_call = { "?" }
+
+// Attribute list with proper spacing
+attributes = { (ws+ ~ attribute)+ }
+
+// Attributes
+attribute = { spread_attr | boolean_attr | shorthand_attr | regular_attr }
+spread_attr = { "{" ~ "..." ~ expr ~ "}" }
+shorthand_attr = { "{" ~ ident ~ "}" }
+boolean_attr = { attr_name ~ !(ws* ~ "=") } // Ensures no '=' follows for boolean attribute
+regular_attr = { attr_name ~ ws* ~ "=" ~ ws* ~ attr_value }
+
+// Enhanced attribute name to support framework prefixes (x-, @, :, v-, etc.)
+attr_name = { 
+    (('a'..'z' | 'A'..'Z' | "@" | ":" | "v-" | "x-" | "data-" | "aria-") ~ 
+    ('a'..'z' | 'A'..'Z' | '0'..'9' | "_" | "-" | ":" | "." | "?" | "@" | "[" | "]" | "(" | ")" | "*")*) 
+}
+
+attr_value = { raw_html | quoted_string | mustache_attr  | unquoted_value }
+unquoted_value = { (!(" " | ">" | "/" | "\t" | "\n" | "\r") ~ ANY)+ }
+quoted_string = { "\"" ~ string_content ~ "\"" | "'" ~ string_content_single ~ "'" }
+string_content = { (escaped_open_brace | escaped_close_brace | (!("\"" | "{" | "\\{" | "\\}") ~ ANY) | mustache_in_string )* }
+string_content_single = { (escaped_open_brace | escaped_close_brace | (!("'" | "{" | "\\{" | "\\}") ~ ANY) | mustache_in_string)* }
+mustache_in_string = { "{" ~ expr ~ "}" }
+mustache_attr = { "{" ~ expr ~ "}" }
+
+// Identifiers
+ident = { ('a'..'z' | 'A'..'Z' | "_") ~ ('a'..'z' | 'A'..'Z' | '0'..'9' | "_")* }
+
+// Expressions (enhanced to support more complex expressions)
+expr = { complex_expr | ident | string | number }
+simple_expr = { ident }
+complex_expr = { ( (!("{" | "}") ~ !(" as " | "\tas") ~ ANY)+ | brace_inner )+ }
+brace_inner = { "{" ~ (!"}" ~ ANY)* ~ "}" }
+string = { "\"" ~ (!"\"" ~ ANY)* ~ "\"" | "'" ~ (!"'" ~ ANY)* ~ "'" }
+number = { '0'..'9'+ }
+// Allow # operator and other Lua operations in expressions
+operator = { "+" | "-" | "*" | "/" | "%" | "^" | "#" | "==" | "~=" | "<=" | ">=" | "<" | ">" | "and" | "or" | "not" }
+
+// Escaped braces (to output literal { or })
+escaped_open_brace = { "\\{" }
+escaped_close_brace = { "\\}" }
+
+// Text content (including escaped braces)
+luat_text = { (escaped_open_brace | escaped_close_brace | (!("{" | "<" | "\\{" | "\\}") ~ ANY))+ }
+
+// Whitespace
+ws = _{ " " | "\t" | "\r" | "\n" }
+NEWLINE = _{ "\n" | "\r\n" | "\r" }
+
+// Define element_or_component_node rule - order matters! Try component_node first
+element_or_component_node = { component_node | html_void_element | standard_element }
+
+// Component node (starts with uppercase)
+component_node = { 
+    self_closing_component | 
+    "<" ~ component_name ~ attributes? ~ ws* ~ ">" ~ template_node* ~ "</" ~ component_name ~ ws* ~ ">"
+}
+
+// HTML5 void element (self-closing by definition)
+html_void_element = {
+    "<" ~ void_element_name ~ attributes? ~ ws* ~ ("/>" | ">")
+}
+
+// Standard HTML element (not a component or void element)
+standard_element = {
+    self_closing_standard |
+    "<" ~ tag_name ~ attributes? ~ ws* ~ ">" ~ template_node* ~ "</" ~ tag_name ~ ws* ~ ">"
+}
+
+// Component name must start with uppercase
+component_name = @{ 
+    ('A'..'Z') ~ // Must start with uppercase
+    ('a'..'z' | 'A'..'Z' | '0'..'9' | "_" | "-" | ":" | ".")* 
+}
+
+// HTML5 void element names (these never have closing tags)
+void_element_name = @{ 
+    "area" | "base" | "br" | "col" | "embed" | "hr" | "img" | "input" | 
+    "link" | "meta" | "param" | "source" | "track" | "wbr"
+}
+
+// Element tag name (cannot start with uppercase, which would make it a component)
+tag_name = @{ 
+    !('A'..'Z') ~ // Must not start with uppercase
+    ('a'..'z' | '0'..'9' | "_" | "-" | ":" | ".")+ 
+}
+
+// Self-closing variations
+self_closing_component = { "<" ~ component_name ~ attributes? ~ ws* ~ "/>" }
+self_closing_standard = { "<" ~ tag_name ~ attributes? ~ ws* ~ "/>" }

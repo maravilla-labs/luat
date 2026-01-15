@@ -1,0 +1,68 @@
+[package]
+name = "luat-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "CLI for luat - Svelte-inspired server-side Lua templating"
+readme = "../../README.md"
+keywords = ["template", "lua", "cli", "dev-server"]
+categories = ["command-line-utilities", "development-tools"]
+
+[lib]
+name = "luat_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "luat"
+path = "src/main.rs"
+
+[dependencies]
+include_dir = "0.7"
+luat = { workspace = true }
+mlua = { workspace = true }
+clap = { workspace = true }
+axum = { workspace = true }
+tokio = { workspace = true }
+tower-http = { workspace = true }
+notify = { workspace = true }
+notify-debouncer-full = { workspace = true }
+glob = { workspace = true }
+globset = { workspace = true }
+toml = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+thiserror = { workspace = true }
+regex = { workspace = true }
+anyhow = "1.0"
+
+# Frontend toolchain
+reqwest = { workspace = true }
+futures-util = { workspace = true }
+flate2 = { workspace = true }
+tar = { workspace = true }
+zip = { workspace = true }
+directories = { workspace = true }
+console = { workspace = true }
+indicatif = { workspace = true }
+sha2 = { workspace = true }
+
+# Routing
+matchit = { workspace = true }
+
+# Body parsing
+form_urlencoded = "1.2"
+
+# KV Store (SQLite backend)
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+[dev-dependencies]
+matchit.workspace = true
+tempfile = "3.10"
+tokio-test = "0.4"
+axum-test = "16"

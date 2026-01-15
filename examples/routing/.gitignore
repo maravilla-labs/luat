@@ -1,0 +1,8 @@
+# Build output
+dist/
+
+# Cache
+.luat/
+
+# OS files
+.DS_Store

@@ -1,0 +1,35 @@
+<!--
+================================================================================
+ROOT HTML TEMPLATE (app.html)
+================================================================================
+This is the shell HTML document that wraps every page in your Luat application.
+Think of it as the "frame" that holds all your content.
+
+PLACEHOLDERS:
+  %luat.title%  - Replaced with the page title (from +page.server.lua)
+  %luat.head%   - Replaced with CSS links, meta tags, and scripts
+  %luat.body%   - Replaced with the rendered page content
+
+HTMX ATTRIBUTES ON <body>:
+  hx-boost="true"  - Automatically upgrades all links and forms to use AJAX
+                     This gives you SPA-like navigation without full page reloads
+  hx-ext="..."     - Loads HTMX extensions:
+                     - "title": Updates browser title on navigation
+                     - "morph": Uses idiomorph for smooth DOM updates
+
+This file is specified in luat.toml under [routing].app_html
+================================================================================
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>%luat.title%</title>
+    %luat.head%
+</head>
+<body hx-boost="true" hx-target="#luat-app" hx-select="#luat-app" class="bg-gray-50 text-gray-900 min-h-screen" hx-ext="title morph">
+    %luat.body%
+
+</body>
+</html>

@@ -1,0 +1,47 @@
+{/*
+================================================================================
+TODO TOGGLE FRAGMENT (routes/todos/(fragments)/toggle.luat)
+================================================================================
+Returns the updated todo item after toggling its completed state.
+Also includes an out-of-band update for the footer count.
+
+TRIGGERED BY:
+  POST /todos?/toggle with { id: todo_id }
+
+RESPONSE:
+  - The updated TodoItem component (replaces the existing item)
+  - Out-of-band count update for the footer
+
+OUT-OF-BAND UPDATES:
+  The span#todo-count with hx-swap-oob="true" updates the footer
+  without requiring a separate request. This keeps the count
+  synchronized with the todo list state.
+================================================================================
+*/}
+
+<script>
+    local TodoItem = require("lib/components/TodoItem")
+
+    -- Handle singular/plural for "item" text 
+    local itemsText = "items"
+    if props.counts and props.counts.active == 1 then
+        itemsText = "item"
+    end
+</script>
+
+{/* Render the updated todo item */}
+{#if props.todo}
+    <TodoItem todo={props.todo} />
+{/if}
+
+{/*
+OUT-OF-BAND COUNT UPDATE
+hx-swap-oob="true" tells HTMX to find #todo-count in the page
+and replace it with this element, even though it's not the
+primary swap target.
+*/}
+{#if props.counts}
+    <span id="todo-count" hx-swap-oob="true">
+        <strong>{props.counts.active}</strong> {itemsText} left
+    </span>
+{/if}

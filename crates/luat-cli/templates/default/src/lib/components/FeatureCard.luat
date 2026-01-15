@@ -1,0 +1,45 @@
+{/*
+================================================================================
+FEATURE CARD COMPONENT (lib/components/FeatureCard.luat)
+================================================================================
+A small card for highlighting features or capabilities.
+Typically used in grids to showcase product features on landing pages.
+
+USAGE:
+  <div class="grid grid-cols-2 gap-4">
+    <FeatureCard title="Fast Runtime">
+      Built on LuaJIT for exceptional performance.
+    </FeatureCard>
+    <FeatureCard title="Server Rendered">
+      All HTML generated on the server.
+    </FeatureCard>
+  </div>
+
+PROPS:
+  title (string): The feature name/heading
+
+CHILDREN:
+  The description text is passed as children between the opening
+  and closing tags.
+
+STYLING:
+  - Glassmorphism effect with backdrop blur
+  - Subtle hover state for interactivity feel
+  - Dark mode compatible
+  - Smaller than Card component - meant for grid layouts
+================================================================================
+*/}
+
+<script>
+local title = props.title or ""
+</script>
+
+{/*
+Feature card with glassmorphism effect.
+hover:bg-white/40 provides subtle feedback on hover.
+*/}
+<div class="bg-white/30 dark:bg-gray-800/50 backdrop-blur-xl p-6 rounded-2xl border border-white/40 dark:border-gray-700/50 shadow-lg shadow-black/5 hover:bg-white/40 dark:hover:bg-gray-700/50 transition-all">
+    <h3 class="font-medium text-gray-800 dark:text-white mb-2 transition-colors">{title}</h3>
+    {/* Description is passed as children and rendered in muted text */}
+    <div class="text-gray-600 dark:text-gray-400 text-sm transition-colors">{@render props.children?.()}</div>
+</div>

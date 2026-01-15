@@ -1,0 +1,29 @@
+{/*
+================================================================================
+TODO EDIT RESULT FRAGMENT (routes/todos/(fragments)/edit.luat)
+================================================================================
+Returns the updated todo item after editing its text.
+Replaces the edit form with the normal todo display.
+
+TRIGGERED BY:
+  POST /todos?/edit with { id: todo_id, text: new_text }
+
+EDIT FLOW:
+  1. User enters edit mode (double-click) -> editForm.luat
+  2. User modifies text and submits -> this fragment
+  3. Server updates text in KV storage
+  4. This fragment returns normal TodoItem display
+
+Unlike toggle/delete, edit doesn't need count updates since
+the number of active/completed items doesn't change.
+================================================================================
+*/}
+
+<script>
+    local TodoItem = require("lib/components/TodoItem")
+</script>
+
+{/* Render the updated todo item (replaces edit form) */}
+{#if props.todo}
+    <TodoItem todo={props.todo} />
+{/if}

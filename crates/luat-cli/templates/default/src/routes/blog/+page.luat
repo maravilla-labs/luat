@@ -1,0 +1,98 @@
+{/*
+================================================================================
+BLOG LISTING PAGE (routes/blog/+page.luat)
+================================================================================
+Displays a list of all blog posts with images, titles, and excerpts.
+Demonstrates data iteration, conditional rendering, and View Transitions.
+
+URL: /blog
+
+DATA FROM SERVER:
+  props.posts - Array of post objects from +page.server.lua
+    Each post has: slug, title, date, excerpt, image_url
+
+KEY FEATURES:
+  1. {#each props.posts as post} - Iterates over posts array
+  2. Conditional image rendering - Only shows image if URL exists
+  3. View Transitions - Animates elements between list and detail views
+  4. Empty state - Shows helpful message when no posts exist
+
+VIEW TRANSITIONS:
+  The style="view-transition-name: blog-image-{post.slug}" attributes
+  enable smooth animations when navigating between pages. The browser's
+  View Transitions API morphs matching elements during navigation.
+
+HTMX BOOST:
+  All <a> links are automatically boosted by HTMX (from app.html).
+  This means clicking a post link does an AJAX request instead of
+  full page reload, enabling smooth View Transitions.
+================================================================================
+*/}
+
+<script>
+-- Import UI components
+local PageHeader = require("lib/components/PageHeader")
+local Card = require("lib/components/Card")
+</script>
+
+{/* Page header with "New Post" action button */}
+<PageHeader title="Blog" description="Latest posts and updates." actionText="New Post" actionHref="/blog/new" />
+
+{/*
+BLOG POST GRID
+If posts exist, render them in a vertical grid.
+Each post is a clickable card with image, title, and excerpt.
+*/}
+{#if props.posts and #props.posts > 0}
+    <div class="grid gap-6">
+        {/*
+        ITERATE OVER POSTS
+        {#each array as item} is Luat's loop syntax.
+        Each post gets its own card linking to /blog/{slug}.
+        */}
+        {#each props.posts as post}
+            <a href="/blog/{post.slug}" class="group block bg-white/30 dark:bg-gray-800/50 backdrop-blur-xl rounded-2xl border border-white/40 dark:border-gray-700/50 shadow-lg shadow-black/5 hover:bg-white/40 dark:hover:bg-gray-700/50 hover:shadow-xl transition-all overflow-hidden">
+                <div class="flex">
+                    {/* Conditional image - only render if image_url exists and isn't empty */}
+                    {#if post.image_url and post.image_url ~= ""}
+                        <div class="w-48 h-36 flex-shrink-0 overflow-hidden">
+                            {/*
+                            VIEW TRANSITION NAME
+                            This attribute tells the browser to animate this image
+                            when navigating to/from the post detail page.
+                            The name must match the detail page's image element.
+                            */}
+                            <img
+                                src="{post.image_url}"
+                                alt="{post.title}"
+                                class="blog-image w-full h-full object-cover rounded-tl-2xl group-hover:scale-105 transition-transform duration-300"
+                                style="view-transition-name: blog-image-{post.slug}"
+                            />
+                        </div>
+                    {/if}
+                    <div class="p-6 flex-1">
+                        <h2
+                            class="text-xl font-medium text-gray-800 dark:text-white mb-2 group-hover:text-purple-600 dark:group-hover:text-purple-400 transition-colors"
+                            style="view-transition-name: blog-title-{post.slug}"
+                        >{post.title}</h2>
+                        <p
+                            class="text-gray-600 dark:text-gray-300 line-clamp-2 transition-colors"
+                            style="view-transition-name: blog-excerpt-{post.slug}"
+                        >{post.excerpt}</p>
+                        <span class="inline-block mt-3 text-purple-500 dark:text-purple-400 text-sm font-medium group-hover:translate-x-1 transition-transform">Read more &rarr;</span>
+                    </div>
+                </div>
+            </a>
+        {/each}
+    </div>
+{:else}
+    {/*
+    EMPTY STATE
+    {:else} provides a fallback when the #if condition is false.
+    Shows a friendly message with a link to create the first post.
+    */}
+    <Card mb="mb-0" class="text-center">
+        <p class="text-gray-500 dark:text-gray-400 mb-4 transition-colors">No posts yet.</p>
+        <a href="/blog/new" class="text-purple-500 dark:text-purple-400 hover:text-purple-600 dark:hover:text-purple-300 font-medium transition-colors">Create your first post &rarr;</a>
+    </Card>
+{/if}

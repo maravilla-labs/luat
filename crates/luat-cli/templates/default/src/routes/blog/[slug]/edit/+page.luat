@@ -1,0 +1,120 @@
+{/*
+================================================================================
+BLOG POST EDIT PAGE (routes/blog/[slug]/edit/+page.luat)
+================================================================================
+Edit form for modifying existing blog posts.
+Uses the same Editor component as the new post page.
+
+URL: /blog/:slug/edit (e.g., /blog/hello-world/edit)
+
+FORM FIELDS:
+  - title: Post title (required)
+  - image_url: Optional cover image URL
+  - excerpt: Short description shown in blog list
+  - content: Rich text content via Tiptap editor
+
+FORM ACTIONS:
+  - Submit: Posts to ?/edit action, shows result in #save-result
+  - Cancel: Links back to post detail page
+  - Delete: Posts to ?/delete with confirmation dialog
+
+HTMX INTEGRATION:
+  hx-post submits to server actions without full page reload.
+  hx-confirm shows native browser confirmation before delete.
+================================================================================
+*/}
+
+<script>
+local Button = require("lib/components/Button")
+local Editor = require("lib/components/editor/Editor")
+
+-- Get existing content for editor initialization
+local editorContent = props.post.content or ""
+</script>
+
+<h1 class="text-4xl font-extralight text-gray-800 dark:text-white mb-8 transition-colors">Edit Post</h1>
+
+{/* Result container for save operation feedback */}
+<div id="save-result"></div>
+
+{/*
+EDIT FORM
+Uses the ?/edit action for updates.
+Glassmorphism styling matches the app design.
+*/}
+<form
+    method="POST"
+    hx-post="/blog/{props.post.slug}/edit?/edit"
+    
+    class="space-y-6 bg-white/30 dark:bg-gray-800/50 backdrop-blur-xl p-8 rounded-3xl border border-white/40 dark:border-gray-700/50 shadow-2xl shadow-black/10 transition-colors"
+>
+    {/* Title field - required */}
+    <div>
+        <label for="title" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 transition-colors">Title</label>
+        <input
+            type="text"
+            id="title"
+            name="title"
+            value="{props.post.title}"
+            required
+            class="w-full px-4 py-3 bg-white/50 dark:bg-gray-700/50 border border-white/40 dark:border-gray-600/50 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-400 focus:bg-white/70 dark:focus:bg-gray-600/50 text-gray-900 dark:text-white transition-all"
+        />
+    </div>
+
+    {/* Cover image URL with preview */}
+    <div>
+        <label for="image_url" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 transition-colors">Cover Image URL</label>
+        <input
+            type="url"
+            id="image_url"
+            name="image_url"
+            value="{props.post.image_url or ''}"
+            class="w-full px-4 py-3 bg-white/50 dark:bg-gray-700/50 border border-white/40 dark:border-gray-600/50 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-400 focus:bg-white/70 dark:focus:bg-gray-600/50 text-gray-900 dark:text-white transition-all"
+            placeholder="https://example.com/image.jpg"
+        />
+        {/* Show existing cover image preview if available */}
+        {#if props.post.image_url and props.post.image_url ~= ""}
+            <div class="mt-3">
+                <img src="{props.post.image_url}" alt="Cover preview" class="h-32 w-auto rounded-xl object-cover shadow-lg" />
+            </div>
+        {/if}
+    </div>
+
+    {/* Excerpt for blog list display */}
+    <div>
+        <label for="excerpt" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 transition-colors">Excerpt</label>
+        <input
+            type="text"
+            id="excerpt"
+            name="excerpt"
+            value="{props.post.excerpt}"
+            class="w-full px-4 py-3 bg-white/50 dark:bg-gray-700/50 border border-white/40 dark:border-gray-600/50 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-400 focus:bg-white/70 dark:focus:bg-gray-600/50 text-gray-900 dark:text-white transition-all"
+            placeholder="Brief description for the blog list"
+        />
+    </div>
+
+    {/* Rich text editor for content */}
+    <div>
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 transition-colors">Content</label>
+        <Editor content="{editorContent}" inputId="content" />
+    </div>
+
+    {/* Action buttons */}
+    <div class="flex items-center gap-4 pt-4">
+        <Button type="submit" size="lg">Save Changes</Button>
+        <Button variant="ghost" href="/blog/{props.post.slug}">Cancel</Button>
+        {/*
+        DELETE BUTTON
+        Uses hx-confirm for browser confirmation dialog.
+        Styled differently to indicate destructive action.
+        */}
+        <button
+            type="button"
+            hx-post="/blog/{props.post.slug}/edit?/delete"
+            hx-confirm="Are you sure you want to delete this post? This cannot be undone."
+            class="ml-auto px-5 py-2.5 bg-red-500/80 backdrop-blur text-white font-medium rounded-full hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-red-400 focus:ring-offset-2 transition-all"
+        >
+            Delete Post
+        </button>
+    </div> 
+</form>

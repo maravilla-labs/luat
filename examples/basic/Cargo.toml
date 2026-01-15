@@ -1,0 +1,9 @@
+[package]
+name = "basic"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+luat = { path = "../../crates/luat" }
+mlua = { version = "0.10.5", features = ["lua54", "vendored", "serialize", "async", "send"] }

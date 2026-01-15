@@ -1,0 +1,88 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/luat",
+    "crates/luat-cli",
+    "crates/luat-wasm",
+    "examples/basic",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/maravilla-labs/luat"
+homepage = "https://github.com/maravilla-labs/luat"
+authors = ["Maravilla Labs <hello@maravilla-labs.com>"]
+rust-version = "1.75"
+
+[workspace.dependencies]
+# Core dependencies
+# Note: async and send features are now controlled via feature flags in crates/luat
+# For WASM builds, only lua54, vendored, serialize are needed
+mlua = { version = "0.10.5", features = ["lua54", "vendored", "serialize"] }
+mlua-json = "1.0.0"
+
+# Parsing
+nom = "8.0.0"
+nom_locate = "5.0.0"
+pest = "2.8.0"
+pest_derive = "2.8.0"
+pest_meta = "2.8.0"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+thiserror = "2"
+
+# Utilities
+regex = "1.8"
+lazy_static = "1.4"
+lru = "0.14"
+sha2 = "0.10"
+glob = "0.3"
+globset = "0.4"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Web server
+axum = { version = "0.7", features = ["ws"] }
+tower-http = { version = "0.5", features = ["fs", "cors"] }
+
+# File watching
+notify = "8.0"
+notify-debouncer-full = "0.5"
+
+# Config
+toml = "0.8"
+
+# URL matching
+matchit = "0.8.4"
+
+# Frontend toolchain
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream", "blocking"] }
+futures-util = "0.3"
+flate2 = "1.0"
+tar = "0.4"
+zip = "2.2"
+directories = "6"
+console = "0.15"
+indicatif = "0.17"
+
+# Internal crates
+luat = { path = "crates/luat" }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

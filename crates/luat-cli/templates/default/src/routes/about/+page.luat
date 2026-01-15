@@ -1,0 +1,54 @@
+{/*
+================================================================================
+ABOUT PAGE (routes/about/+page.luat)
+================================================================================
+A static informational page about the Luat framework.
+Demonstrates component composition and grid layouts.
+
+URL: /about
+
+COMPONENTS USED:
+  - Heading: Page title with description
+  - Card: Content container with glassmorphism
+  - FeatureCard: Small cards for feature highlights
+
+LAYOUT PATTERN:
+  This page uses a 2-column responsive grid for feature cards:
+  - sm:grid-cols-2: Two columns on small screens and up
+  - gap-4: Consistent spacing between cards
+
+NO SERVER DATA:
+  This is a static page - it doesn't need data from +page.server.lua.
+  All content is hardcoded in the template.
+================================================================================
+*/}
+
+<script>
+-- Import UI components 
+local Heading = require("lib/components/Heading")
+local Card = require("lib/components/Card")
+local FeatureCard = require("lib/components/FeatureCard")
+</script>
+
+{/* Page header with title and description */}
+<Heading title="About" description="Learn more about Luat and what makes it special." />
+
+{/* Main content card */}
+<Card title="What is Luat?">
+    <p class="text-gray-600 dark:text-gray-300 leading-relaxed transition-colors">Luat is a Svelte-inspired server-side templating engine that uses Lua for logic. It combines the familiar component-based syntax of modern frameworks with the simplicity and speed of server-side rendering.</p>
+</Card>
+
+{/*
+FEATURE GRID
+Uses CSS Grid for responsive layout.
+FeatureCard components highlight key benefits.
+*/}
+<div class="mb-6">
+    <h2 class="text-2xl font-light text-gray-800 dark:text-white mb-6 transition-colors">Why Luat?</h2>
+    <div class="grid gap-4 sm:grid-cols-2">
+        <FeatureCard title="Familiar Syntax">Svelte-like templating that feels natural and intuitive.</FeatureCard>
+        <FeatureCard title="Fast Runtime">Powered by Lua for blazing fast server-side execution.</FeatureCard>
+        <FeatureCard title="Server Rendered">Pure server-side rendering for fast initial page loads.</FeatureCard>
+        <FeatureCard title="No JS Required">Build complete apps without shipping JavaScript to clients.</FeatureCard>
+    </div>
+</div>

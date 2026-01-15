@@ -1,0 +1,53 @@
+{/*
+================================================================================
+CARD COMPONENT (lib/components/Card.luat)
+================================================================================
+A container component with frosted glass styling.
+Used to group related content with a consistent visual style.
+
+USAGE:
+  <Card title="Features">
+    <ul>...</ul>
+  </Card>
+
+  <Card title="Settings" mb="mb-0" class="max-w-md">
+    ...
+  </Card>
+
+PROPS:
+  title (string):   Optional heading displayed at the top
+  mb (string):      Margin-bottom class (default: "mb-8")
+  class (string):   Additional CSS classes
+
+DESIGN PATTERN:
+  "Frosted glass" (glassmorphism) effect is achieved with:
+  - Semi-transparent background: bg-white/30
+  - Backdrop blur: backdrop-blur-xl
+  - Subtle border: border-white/40
+  - Shadow for depth: shadow-2xl shadow-black/10
+
+CHILDREN:
+  Content placed between <Card>...</Card> is rendered via
+  {@render props.children?.()} which outputs the nested content.
+================================================================================
+*/}
+
+<script>
+-- Extract props with sensible defaults 
+local title = props.title
+local class = props.class or ""
+local mb = props.mb or "mb-8"  -- Default margin-bottom for stacking cards
+</script>
+
+{/*
+Card container with glassmorphism effect.
+The {mb} and {class} interpolation adds those classes dynamically.
+*/}
+<div class="bg-white/30 dark:bg-gray-800/50 backdrop-blur-xl rounded-3xl border border-white/40 dark:border-gray-700/50 shadow-2xl shadow-black/10 p-8 transition-colors {mb} {class}">
+    {/* Conditionally render title if provided */}
+    {#if title}
+        <h2 class="text-2xl font-light text-gray-800 dark:text-white mb-4 transition-colors">{title}</h2>
+    {/if}
+    {/* Render whatever content is passed as children */}
+    {@render props.children?.()}
+</div>

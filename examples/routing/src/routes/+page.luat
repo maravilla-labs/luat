@@ -1,0 +1,29 @@
+<h1 class="text-3xl font-bold text-slate-900 mb-4">Welcome to Luat Routing!</h1>
+<p class="text-gray-600 mb-6">This example demonstrates SvelteKit-style file-based routing with Tailwind CSS.</p>
+
+{#if props.message}
+    <div class="bg-blue-50 border-l-4 border-blue-500 p-4 mb-6 rounded-r">
+        <p class="text-blue-700">{props.message}</p>
+    </div>
+{/if}
+
+<h2 class="text-xl font-semibold text-slate-800 mt-8 mb-4">Features Demonstrated</h2>
+<ul class="list-disc list-inside space-y-2 text-gray-600 mb-6">
+    <li>File-based routing with <code class="bg-gray-200 px-1.5 py-0.5 rounded text-sm">+page.luat</code></li>
+    <li>Layouts with <code class="bg-gray-200 px-1.5 py-0.5 rounded text-sm">+layout.luat</code></li>
+    <li>Server-side data loading with <code class="bg-gray-200 px-1.5 py-0.5 rounded text-sm">+page.server.lua</code></li>
+    <li>API routes with <code class="bg-gray-200 px-1.5 py-0.5 rounded text-sm">+server.lua</code></li>
+    <li>Dynamic routes with <code class="bg-gray-200 px-1.5 py-0.5 rounded text-sm">[param]</code> syntax</li>
+    <li>Tailwind CSS via frontend toolchain</li>
+</ul>
+
+<h2 class="text-xl font-semibold text-slate-800 mt-8 mb-4">Project Structure</h2>
+<ul class="list-disc list-inside space-y-2 text-gray-600 mb-6">
+    <li><code class="bg-gray-200 px-1.5 py-0.5 rounded text-sm">src/app.html</code> - HTML shell</li>
+    <li><code class="bg-gray-200 px-1.5 py-0.5 rounded text-sm">src/routes/+layout.luat</code> - Root layout</li>
+    <li><code class="bg-gray-200 px-1.5 py-0.5 rounded text-sm">src/routes/blog/[slug]/</code> - Dynamic route</li>
+    <li><code class="bg-gray-200 px-1.5 py-0.5 rounded text-sm">src/routes/api/hello/+server.lua</code> - API endpoint</li>
+</ul>
+
+<h2 class="text-xl font-semibold text-slate-800 mt-8 mb-4">Try the API</h2>
+<p class="text-gray-600">Visit <a href="/api/hello" class="text-blue-600 hover:underline">/api/hello</a> to see the JSON API response.</p>

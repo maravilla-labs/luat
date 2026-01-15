@@ -1,0 +1,65 @@
+{/*
+================================================================================
+RICH TEXT EDITOR COMPONENT (lib/components/editor/Editor.luat)
+================================================================================
+A WYSIWYG rich text editor powered by Tiptap.
+This is the main component that combines the toolbar and editor container.
+
+USAGE:
+  <Editor
+    content="<p>Initial content...</p>"
+    inputId="post-content"
+  />
+
+PROPS:
+  content (string):   Initial HTML content (default: "")
+  inputId (string):   ID for the hidden input field (default: "content")
+  toolbarId (string): ID for the toolbar element (default: "editor-toolbar")
+  editorId (string):  ID for the editor container (default: "content-editor")
+
+HOW IT WORKS:
+  1. EditorToolbar: Renders formatting buttons (bold, italic, headings, etc.)
+  2. EditorContainer: Renders the editable content area and hidden input
+  3. JavaScript in assets/js/modules/editor.ts initializes Tiptap
+  4. On content change, the hidden input is updated for form submission
+
+TIPTAP INTEGRATION:
+  Tiptap is a headless rich text editor framework. The JavaScript code:
+  - Finds elements with [data-editor] attribute
+  - Creates a Tiptap editor instance
+  - Connects toolbar buttons via [data-editor-action] attributes
+  - Syncs content to the hidden input
+
+FORM SUBMISSION:
+  The hidden <input> element stores the HTML content. When the form
+  submits, this value is sent to the server as the "content" field.
+================================================================================
+*/}
+
+<script>
+-- Import editor sub-components
+local EditorToolbar = require("lib/components/editor/EditorToolbar")
+local EditorContainer = require("lib/components/editor/EditorContainer")
+
+-- Extract props with defaults
+local content = props.content or ""
+local inputId = props.inputId or "content"
+local toolbarId = props.toolbarId or "editor-toolbar"
+local editorId = props.editorId or "content-editor"
+</script>
+
+{/*
+EDITOR COMPOSITION
+The editor is split into two parts:
+1. Toolbar: Formatting buttons at the top
+2. Container: Editable content area below
+
+They're connected via IDs so the JavaScript can wire them together.
+*/}
+<EditorToolbar id="{toolbarId}" />
+<EditorContainer
+    content="{content}"
+    inputId="{inputId}"
+    toolbarId="{toolbarId}"
+    editorId="{editorId}"
+/>

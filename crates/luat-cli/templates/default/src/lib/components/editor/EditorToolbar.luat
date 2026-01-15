@@ -1,0 +1,109 @@
+{/*
+================================================================================
+EDITOR TOOLBAR COMPONENT (lib/components/editor/EditorToolbar.luat)
+================================================================================
+The formatting toolbar for the rich text editor.
+Contains buttons for text formatting, headings, lists, code, and media.
+
+USAGE:
+  (Usually not used directly - use Editor component instead)
+
+  <EditorToolbar id="editor-toolbar" />
+
+PROPS:
+  id (string): The toolbar element ID (default: "editor-toolbar")
+
+TOOLBAR BUTTONS:
+  Each button has a data-editor-action attribute that tells JavaScript
+  what formatting to apply:
+
+  TEXT FORMATTING:
+    - bold: Toggle bold text
+    - italic: Toggle italic text
+    - strike: Toggle strikethrough
+
+  HEADINGS:
+    - h2: Toggle Heading 2
+    - h3: Toggle Heading 3
+
+  LISTS:
+    - bullet-list: Toggle bullet list
+    - ordered-list: Toggle numbered list
+    - blockquote: Toggle blockquote
+
+  CODE:
+    - code: Toggle inline code
+    - code-block: Toggle code block
+
+  MEDIA:
+    - link: Add/edit link (prompts for URL)
+    - image: Add image (prompts for URL)
+
+  HISTORY:
+    - undo: Undo last change
+    - redo: Redo undone change
+
+JAVASCRIPT CONNECTION:
+  The editor.ts module finds buttons by [data-editor-action] and
+  attaches click handlers that call the corresponding Tiptap commands.
+  Active states are updated to show which formatting is currently applied.
+================================================================================
+*/}
+
+<script>
+-- Import Button component for toolbar buttons
+local Button = require("lib/components/Button")
+local toolbarId = props.id or "editor-toolbar"
+</script>
+
+{/*
+TOOLBAR CONTAINER
+Flexbox layout with gaps between buttons.
+Rounded top corners (editor container has bottom corners).
+*/}
+<div id="{toolbarId}" class="flex flex-wrap gap-1 p-3 border border-b-0 border-white/40 dark:border-gray-600/50 rounded-t-xl bg-white/30 dark:bg-gray-700/30 backdrop-blur transition-colors">
+
+    {/* TEXT FORMATTING SECTION */}
+    <Button variant="icon" data-editor-action="bold" title="Bold">
+        <strong>B</strong>
+    </Button>
+    <Button variant="icon" data-editor-action="italic" title="Italic">
+        <em>I</em>
+    </Button>
+    <Button variant="icon" data-editor-action="strike" title="Strikethrough">
+        <s>S</s>
+    </Button>
+
+    {/* Vertical divider between sections */}
+    <span class="w-px bg-white/40 dark:bg-gray-600/50 mx-1"></span>
+
+    {/* HEADINGS SECTION */}
+    <Button variant="icon" data-editor-action="h2" title="Heading 2">H2</Button>
+    <Button variant="icon" data-editor-action="h3" title="Heading 3">H3</Button>
+
+    <span class="w-px bg-white/40 dark:bg-gray-600/50 mx-1"></span>
+
+    {/* LISTS SECTION */}
+    <Button variant="icon" data-editor-action="bullet-list" title="Bullet List">&bull;</Button>
+    <Button variant="icon" data-editor-action="ordered-list" title="Numbered List">1.</Button>
+    <Button variant="icon" data-editor-action="blockquote" title="Quote">&ldquo;</Button>
+
+    <span class="w-px bg-white/40 dark:bg-gray-600/50 mx-1"></span>
+
+    {/* CODE SECTION */}
+    <Button variant="icon" data-editor-action="code" title="Inline Code">&lt;&gt;</Button>
+    <Button variant="icon" data-editor-action="code-block" title="Code Block">&#123;&#125;</Button>
+
+    <span class="w-px bg-white/40 dark:bg-gray-600/50 mx-1"></span>
+
+    {/* MEDIA SECTION */}
+    <Button variant="icon" data-editor-action="link" title="Add Link">&#128279;</Button>
+    <Button variant="icon" data-editor-action="image" title="Add Image">&#128247;</Button>
+
+    {/* Spacer pushes undo/redo to the right */}
+    <span class="flex-1"></span>
+
+    {/* HISTORY SECTION */}
+    <Button variant="icon" data-editor-action="undo" title="Undo">&#8617;</Button>
+    <Button variant="icon" data-editor-action="redo" title="Redo">&#8618;</Button>
+</div>

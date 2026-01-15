@@ -1,0 +1,39 @@
+{
+  "name": "@maravilla-labs/luat-wasm",
+  "version": "0.1.0",
+  "description": "WebAssembly build of the Luat templating engine",
+  "type": "module",
+  "main": "./luat.js",
+  "module": "./luat.js",
+  "exports": {
+    ".": {
+      "import": "./luat.js",
+      "default": "./luat.js"
+    },
+    "./luat.js": "./luat.js"
+  },
+  "files": [
+    "luat.js",
+    "luat-wasm.mjs",
+    "luat_wasm.wasm"
+  ],
+  "scripts": {
+    "build": "cargo build --package luat-wasm --target wasm32-unknown-emscripten --release && npm run copy-artifacts",
+    "copy-artifacts": "cp ../../target/wasm32-unknown-emscripten/release/luat-wasm.js ./luat-wasm.mjs && cp ../../target/wasm32-unknown-emscripten/release/luat_wasm.wasm .",
+    "test": "npm run build && node ../../target/wasm32-unknown-emscripten/release/luat-wasm.js",
+    "test:api": "npm run build && node test-api.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/maravilla-labs/luat"
+  },
+  "keywords": [
+    "luat",
+    "template",
+    "lua",
+    "wasm",
+    "webassembly",
+    "svelte"
+  ],
+  "license": "MIT OR Apache-2.0"
+}

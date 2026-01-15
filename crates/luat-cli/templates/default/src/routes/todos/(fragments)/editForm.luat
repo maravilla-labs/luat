@@ -1,0 +1,95 @@
+{/*
+================================================================================
+TODO EDIT FORM FRAGMENT (routes/todos/(fragments)/editForm.luat)
+================================================================================
+Fragment that replaces a todo item with an editable form.
+Returned when user double-clicks or presses Enter on a todo.
+
+HOW EDITING WORKS:
+  1. User double-clicks or presses Enter on a todo
+  2. HTMX sends GET to /todos?/editForm&id=xxx
+  3. Server returns this fragment
+  4. Fragment replaces the todo's <li> with an edit form
+
+FORM SUBMISSION:
+  - Submit (Enter): Sends POST to /todos?/edit with new text
+  - Cancel (Escape): Hidden button triggers /todos?/cancelEdit
+  - Blur (click away): Also submits the form after short delay
+
+ACCESSIBILITY:
+  - Auto-focuses the input field
+  - Screen reader announces "Editing todo: [text]"
+  - Instructions describe available actions
+
+STYLING:
+  - Highlighted with subtle ring/background to show edit mode
+  - Input field has no visible border for inline editing feel
+================================================================================
+*/}
+
+<script>
+    local todo = props.todo
+    -- Edit mode has highlighted styling 
+    local liClass = "group flex items-center px-5 py-4 bg-white/30 dark:bg-gray-700/50 ring-1 ring-white/50 dark:ring-gray-600/50 ring-offset-2 ring-offset-transparent"
+</script>
+
+{/*
+EDIT FORM LIST ITEM
+Replaces the normal todo item when editing.
+Same ID allows HTMX to swap in place.
+*/}
+<li
+    id="todo-{todo.id}"
+    class="{liClass}"
+    role="listitem"
+    aria-label="Editing todo: {todo.text}"
+    data-todo-id="{todo.id}"
+    data-editing="true"
+>
+    {/*
+    EDIT FORM
+    hx-trigger includes "blur" to save when clicking away.
+    The delay prevents accidental saves during normal interaction.
+    */}
+    <form
+        hx-post="/todos?/edit"
+        hx-target="#todo-{todo.id}"
+        hx-swap="outerHTML"
+        hx-trigger="submit, blur from:find input delay:100ms"
+        class="flex-1 flex items-center"
+        role="form"
+        aria-label="Edit todo form"
+    >
+        {/* Hidden field passes the todo ID with the form */}
+        <input type="hidden" name="id" value="{todo.id}" />
+        <label for="edit-{todo.id}" class="sr-only">Edit todo text</label>
+        <input
+            type="text"
+            id="edit-{todo.id}"
+            name="text"
+            value="{todo.text}"
+            autofocus
+            autocomplete="off"
+            class="flex-1 ml-4 text-lg px-2 py-1 bg-transparent border-none outline-none focus:outline-none focus:ring-0 text-gray-700 dark:text-gray-200"
+            aria-describedby="edit-instructions-{todo.id}"
+        />
+        <span id="edit-instructions-{todo.id}" class="sr-only">
+            Press Enter to save, Escape to cancel
+        </span>
+    </form>
+    {/*
+    CANCEL BUTTON (hidden)
+    Triggered by Escape key press in the input field.
+    Restores the original todo display without saving.
+    */}
+    <button
+        type="button"
+        hx-post="/todos?/cancelEdit"
+        hx-target="#todo-{todo.id}"
+        hx-swap="outerHTML"
+        hx-trigger="keyup[key=='Escape'] from:previous form"
+        hx-vals={json.encode({id = todo.id})}
+        class="hidden"
+        aria-hidden="true"
+    ></button>
+</li>

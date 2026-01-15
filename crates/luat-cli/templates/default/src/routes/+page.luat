@@ -1,0 +1,67 @@
+{/*
+================================================================================
+HOME PAGE (+page.luat)
+================================================================================
+This is the home page template, rendered when users visit the root URL (/).
+
+FILE NAMING CONVENTION:
+  +page.luat        - The page template (what users see)
+  +page.server.lua  - Server-side data loading (runs before template)
+
+The data returned from +page.server.lua is available here as "props".
+For example, props.message contains "Hello from the server!".
+
+TEMPLATE FEATURES DEMONSTRATED:
+  - Component usage: <Card>, <CheckItem>
+  - Conditional rendering: 
+  - Props interpolation: {props.message}
+================================================================================
+*/}
+
+<script>
+-- Import reusable UI components
+local Card = require("lib/components/Card")
+local CheckItem = require("lib/components/CheckItem")
+</script>
+
+{/* Hero section with logo and welcome message */}
+<div class="text-center mb-12">
+    <div class="inline-block p-4 bg-white/20 dark:bg-white/10 backdrop-blur-lg rounded-3xl mb-6">
+        <img src="http://luat.maravillalabs.com/img/luat-logo.webp" alt="Luat" class="w-24 h-24" />
+    </div>
+    <h1 class="text-5xl font-extralight text-gray-800 dark:text-white mb-4 transition-colors">Welcome to Luat!</h1>
+    <p class="text-lg text-gray-600 dark:text-gray-300 font-light transition-colors">A Lua templating framework for building server-rendered web applications.</p>
+</div>
+
+{/*
+CONDITIONAL RENDERING
+renders content only when the condition is truthy.
+props.message is set in +page.server.lua's load() function.
+*/}
+{#if props.message}
+    <div class="bg-white/20 dark:bg-white/10 backdrop-blur-lg border border-white/30 dark:border-white/10 text-gray-700 dark:text-gray-200 px-5 py-4 rounded-2xl mb-8 transition-colors">
+        {props.message}
+    </div>
+{/if}
+
+{/*
+COMPONENT USAGE
+Components are used like HTML tags but with PascalCase names.
+Props are passed as attributes: title="Features"
+*/}
+<Card title="Features">
+    <ul class="space-y-3">
+        {/* CheckItem is a simple component that displays a checkmark + text */}
+        <CheckItem text="File-based routing with +page.luat" />
+        <CheckItem text="Layouts with +layout.luat" />
+        <CheckItem text="Server-side data loading with +page.server.lua" />
+        <CheckItem text="API routes with +server.lua" />
+        <CheckItem text="Dynamic routes with [param] syntax" />
+        <CheckItem text="Live reload in development" />
+    </ul>
+</Card>
+
+{/* The mb prop controls margin-bottom; mb="mb-0" removes it */}
+<Card title="Getting Started" mb="mb-0">
+    <p class="text-gray-600 dark:text-gray-300 transition-colors">Edit <code class="bg-white/50 dark:bg-gray-700/50 px-2 py-1 rounded-lg text-sm font-mono text-gray-700 dark:text-gray-200">src/routes/+page.luat</code> to modify this page.</p>
+</Card>

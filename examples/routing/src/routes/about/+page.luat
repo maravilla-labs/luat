@@ -1,0 +1,53 @@
+<h1 class="text-3xl font-bold text-slate-900 mb-4">About Luat Routing</h1>
+
+<p class="text-gray-600 mb-6">Luat provides SvelteKit-style file-based routing for server-rendered applications.</p>
+
+<h2 class="text-xl font-semibold text-slate-800 mt-8 mb-4">How It Works</h2>
+<p class="text-gray-600 mb-4">Each directory in <code class="bg-gray-200 px-1.5 py-0.5 rounded text-sm">src/routes/</code> corresponds to a URL path:</p>
+<ul class="list-disc list-inside space-y-2 text-gray-600 mb-6">
+    <li><code class="bg-gray-200 px-1.5 py-0.5 rounded text-sm">src/routes/+page.luat</code> renders at <code class="bg-gray-200 px-1.5 py-0.5 rounded text-sm">/</code></li>
+    <li><code class="bg-gray-200 px-1.5 py-0.5 rounded text-sm">src/routes/about/+page.luat</code> renders at <code class="bg-gray-200 px-1.5 py-0.5 rounded text-sm">/about</code></li>
+    <li><code class="bg-gray-200 px-1.5 py-0.5 rounded text-sm">src/routes/blog/[slug]/+page.luat</code> renders at <code class="bg-gray-200 px-1.5 py-0.5 rounded text-sm">/blog/:slug</code></li>
+</ul>
+
+<h2 class="text-xl font-semibold text-slate-800 mt-8 mb-4">File Conventions</h2>
+<div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+    <table class="w-full text-sm">
+        <thead class="bg-gray-50 border-b border-gray-200">
+            <tr>
+                <th class="text-left px-4 py-3 font-semibold text-slate-700">File</th>
+                <th class="text-left px-4 py-3 font-semibold text-slate-700">Purpose</th>
+            </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">
+            <tr>
+                <td class="px-4 py-3"><code class="bg-gray-100 px-1.5 py-0.5 rounded text-xs">+page.luat</code></td>
+                <td class="px-4 py-3 text-gray-600">Page template</td>
+            </tr>
+            <tr>
+                <td class="px-4 py-3"><code class="bg-gray-100 px-1.5 py-0.5 rounded text-xs">+page.server.lua</code></td>
+                <td class="px-4 py-3 text-gray-600">Server-side data loading</td>
+            </tr>
+            <tr>
+                <td class="px-4 py-3"><code class="bg-gray-100 px-1.5 py-0.5 rounded text-xs">+layout.luat</code></td>
+                <td class="px-4 py-3 text-gray-600">Layout wrapper</td>
+            </tr>
+            <tr>
+                <td class="px-4 py-3"><code class="bg-gray-100 px-1.5 py-0.5 rounded text-xs">+server.lua</code></td>
+                <td class="px-4 py-3 text-gray-600">API endpoint (JSON)</td>
+            </tr>
+            <tr>
+                <td class="px-4 py-3"><code class="bg-gray-100 px-1.5 py-0.5 rounded text-xs">app.html</code></td>
+                <td class="px-4 py-3 text-gray-600">HTML shell</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+
+<h2 class="text-xl font-semibold text-slate-800 mt-8 mb-4">Dynamic Routes</h2>
+<p class="text-gray-600 mb-4">Use bracket syntax for URL parameters:</p>
+<ul class="list-disc list-inside space-y-2 text-gray-600">
+    <li><code class="bg-gray-200 px-1.5 py-0.5 rounded text-sm">[id]</code> - Required parameter</li>
+    <li><code class="bg-gray-200 px-1.5 py-0.5 rounded text-sm">[[optional]]</code> - Optional parameter</li>
+    <li><code class="bg-gray-200 px-1.5 py-0.5 rounded text-sm">[...rest]</code> - Catch-all parameter</li>
+</ul>

@@ -1,0 +1,264 @@
+{/*
+================================================================================
+TODO APPLICATION PAGE (routes/todos/+page.luat)
+================================================================================
+A full-featured todo application inspired by TodoMVC.
+Demonstrates HTMX for dynamic updates, Alpine.js for client state, and
+comprehensive keyboard accessibility.
+
+URL: /todos
+
+DATA FROM SERVER:
+  props.todos - Array of todo objects
+  props.counts - { total, active, completed }
+  props.filter - Current filter ("all", "active", "completed")
+
+FEATURES:
+  - Add new todos with auto-focus input
+  - Toggle individual todo completion
+  - Toggle all todos at once
+  - Edit todo text (double-click or Enter)
+  - Delete todos
+  - Filter by status (All/Active/Completed)
+  - Clear all completed todos
+  - Keyboard navigation (arrow keys, Space, Enter, Delete, Escape)
+  - Screen reader accessibility (ARIA labels, live regions)
+
+HTMX PATTERNS:
+  - hx-post="?/add" - Calls the "add" action
+  - hx-target="#todo-list" - Updates specific element
+  - hx-swap="beforeend" - Appends new content
+  - hx-swap-oob="true" - Out-of-band updates (update multiple elements)
+
+ALPINE.JS:
+  Used for tracking the current filter state in the URL.
+  x-data, :class bindings update filter button styles.
+
+FRAGMENTS:
+  Each action returns a fragment template from (fragments)/ directory.
+  This allows server to return just the changed HTML.
+================================================================================
+*/}
+
+<script>
+    -- Import components
+    local TodoItem = require("lib/components/TodoItem")
+    local PageHeader = require("lib/components/PageHeader")
+    local Button = require("lib/components/Button")
+
+    -- Compute singular/plural text for item counts 
+    local itemsText = "items"
+    if props.counts.active == 1 then
+        itemsText = "item"
+    end
+
+    -- Toggle all button label changes based on state
+    local toggleAllLabel = "Mark all as completed"
+    if props.counts.active == 0 then
+        toggleAllLabel = "Mark all as active"
+    end
+
+    -- Clear completed button label with count
+    local clearItemsText = "items"
+    if props.counts.completed == 1 then
+        clearItemsText = "item"
+    end
+    local clearLabel = "Clear " .. props.counts.completed .. " completed " .. clearItemsText
+
+    -- ALPINE.JS EXPRESSIONS
+    -- These JavaScript expressions initialize and update the filter state
+    -- based on the URL query parameter.
+    local filterDataExpr = "{ filter: new URLSearchParams(window.location.search).get('filter') || 'all' }"
+    local filterUpdateExpr = "filter = new URLSearchParams(window.location.search).get('filter') || 'all'"
+</script>
+
+<div class="" role="main" aria-label="Todo application">
+    {/* Page header */}
+    <PageHeader title="Todos" description="Keep track of your tasks." />
+
+    <div class="max-w-lg mx-auto">
+        {/*
+        MAIN TODO CONTAINER
+        hx-ext="morph" enables smooth DOM morphing for updates
+        */}
+        <div class="bg-white/30 dark:bg-gray-800/50 backdrop-blur-xl rounded-3xl border border-white/40 dark:border-gray-700/50 shadow-2xl shadow-black/10 overflow-hidden transition-colors" hx-ext="morph">
+
+        {/*
+        HEADER WITH INPUT
+        Contains toggle-all button and new todo input form
+        */}
+        <header class="relative bg-white/20 dark:bg-gray-800/30 backdrop-blur-lg">
+            {/* Toggle all button - only shown when there are todos */}
+            {#if props.counts.total > 0}
+                <button
+                    type="button"
+                    hx-post="?/toggleAll"
+                    hx-target="#todo-list"
+                    hx-swap="innerHTML"
+                    hx-vals={json.encode({completed = tostring(props.counts.active > 0)})}
+                    class="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500/70 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 text-xl rotate-90 focus:outline-none transition-colors"
+                    title="Toggle all todos"
+                    aria-label="{toggleAllLabel}"
+                >
+                    {#if props.counts.active == 0}
+                        <span class="text-green-600 dark:text-green-400" aria-hidden="true">&#10003;</span>
+                    {:else}
+                        <span aria-hidden="true">&#10095;</span>
+                    {/if}
+                </button>
+            {/if}
+            {/*
+            NEW TODO FORM
+            hx-on::after-request resets form and refocuses input after submission
+            */}
+            <form
+                hx-post="?/add"
+                hx-target="#todo-list"
+                hx-swap="beforeend"
+                hx-select="unset"
+                hx-on::after-request="this.reset(); this.querySelector('input').focus()"
+                role="form"
+                aria-label="Add new todo"
+            >
+                <label for="new-todo" class="sr-only">New todo</label>
+                <input
+                    type="text"
+                    id="new-todo"
+                    name="text"
+                    placeholder="What needs to be done?"
+                    autofocus
+                    autocomplete="off"
+                    class="w-full py-5 pl-16 pr-6 text-xl bg-transparent text-gray-800 dark:text-white placeholder:text-gray-400/70 dark:placeholder:text-gray-500 placeholder:font-light border-b border-white/30 dark:border-gray-700/50 focus:outline-none focus:bg-white/10 dark:focus:bg-gray-700/30 transition-colors"
+                    aria-describedby="todo-instructions"
+                />
+                <span id="todo-instructions" class="sr-only">Press Enter to add a new todo</span>
+            </form>
+        </header>
+
+        {/*
+        TODO LIST
+        Keyboard navigation with Arrow Up/Down moves focus between items.
+        Each TodoItem handles toggle, edit, delete via HTMX.
+        */}
+        <ul
+            id="todo-list"
+            class="divide-y divide-white/20 dark:divide-gray-700/50"
+            role="list"
+            aria-label="Todo items"
+            x-data
+            @keydown.up.prevent="$event.target.closest('li')?.previousElementSibling?.focus()"
+            @keydown.down.prevent="$event.target.closest('li')?.nextElementSibling?.focus()"
+        >
+            {/* Render each todo using the TodoItem component */}
+            {#each props.todos as todo, index}
+                <TodoItem todo={todo} index={index} />
+            {/each}
+        </ul>
+
+        {/*
+        FOOTER
+        Shows item count, filter buttons, and clear completed button.
+        Only visible when there are todos.
+        */}
+        {#if props.counts.total > 0}
+            <footer
+                id="todo-footer"
+                class="flex items-center justify-between px-5 py-4 text-sm text-gray-600/80 dark:text-gray-400 border-t border-white/20 "
+                role="contentinfo"
+                aria-label="Todo list summary and filters"
+            >
+                {/* Item count with live region for accessibility */}
+                <span id="todo-count" aria-live="polite" class="font-medium">
+                    <strong class="text-gray-700 dark:text-gray-200">{props.counts.active}</strong> {itemsText} left
+                </span>
+
+                {/*
+                FILTER NAVIGATION
+                Alpine.js tracks current filter to style active button.
+                hx-push-url updates browser URL without page reload.
+                */}
+                <nav
+                    class="flex gap-1"
+                    role="navigation"
+                    aria-label="Filter todos"
+                    x-data={filterDataExpr}
+                    @htmx:pushed-into-history.window={filterUpdateExpr}
+                >
+                    <a
+                        href="/todos"
+                        hx-get="/todos?/all"
+                        hx-target="#todo-list"
+                        hx-swap="innerHTML"
+                        hx-select="unset"
+                        hx-push-url="/todos"
+                        class="px-3 py-1.5 rounded-full text-xs font-medium transition-all focus:outline-none"
+                        :class="filter === 'all' ? 'bg-white/50 dark:bg-gray-600/50 text-gray-800 dark:text-white shadow-sm' : 'text-gray-600 dark:text-gray-400 hover:bg-white/30 dark:hover:bg-gray-700/50'"
+                        :aria-current="filter === 'all' ? 'page' : 'false'"
+                    >
+                        All
+                    </a>
+                    <a
+                        href="/todos?filter=active"
+                        hx-get="/todos?/active"
+                        hx-target="#todo-list"
+                        hx-swap="innerHTML"
+                        hx-select="unset"
+                        hx-push-url="/todos?filter=active"
+                        class="px-3 py-1.5 rounded-full text-xs font-medium transition-all focus:outline-none"
+                        :class="filter === 'active' ? 'bg-white/50 dark:bg-gray-600/50 text-gray-800 dark:text-white shadow-sm' : 'text-gray-600 dark:text-gray-400 hover:bg-white/30 dark:hover:bg-gray-700/50'"
+                        :aria-current="filter === 'active' ? 'page' : 'false'"
+                    >
+                        Active
+                    </a>
+                    <a
+                        href="/todos?filter=completed"
+                        hx-get="/todos?/completed"
+                        hx-target="#todo-list"
+                        hx-select="unset"
+                        hx-swap="innerHTML"
+                        hx-push-url="/todos?filter=completed"
+                        class="px-3 py-1.5 rounded-full text-xs font-medium transition-all focus:outline-none"
+                        :class="filter === 'completed' ? 'bg-white/50 dark:bg-gray-600/50 text-gray-800 dark:text-white shadow-sm' : 'text-gray-600 dark:text-gray-400 hover:bg-white/30 dark:hover:bg-gray-700/50'"
+                        :aria-current="filter === 'completed' ? 'page' : 'false'"
+                    >
+                        Completed
+                    </a>
+                </nav>
+
+                {/* Clear completed button - only shown when there are completed items */}
+                {#if props.counts.completed > 0}
+                    <button
+                        type="button"
+                        hx-post="?/clear"
+                        hx-target="#todo-list"
+                        hx-swap="innerHTML"
+                        class="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 focus:outline-none transition-colors text-xs"
+                        aria-label="{clearLabel}"
+                    >
+                        Clear completed
+                    </button>
+                {:else}
+                    <span></span>
+                {/if}
+            </footer>
+        {/if}
+    </div>
+
+        {/* Usage hint */}
+        <p class="text-center text-gray-500 dark:text-gray-400 text-sm mt-8 font-light transition-colors" aria-hidden="true">
+            Double-click or press Enter to edit a todo
+        </p>
+    </div>
+
+    {/* Screen reader only: Keyboard shortcuts documentation */}
+    <div class="sr-only" role="note" aria-label="Keyboard shortcuts">
+        <h2>Keyboard shortcuts</h2>
+        <ul>
+            <li>Space: Toggle todo completion</li>
+            <li>Enter or Double-click: Edit todo</li>
+            <li>Delete or Backspace: Delete todo</li>
+            <li>Arrow Up/Down: Navigate between todos</li>
+            <li>Escape: Cancel editing</li>
+        </ul>
+    </div>
+</div>

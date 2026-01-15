@@ -1,0 +1,97 @@
+# ==============================================================================
+# LUAT PROJECT CONFIGURATION
+# ==============================================================================
+# This is the main configuration file for your Luat application.
+# Luat uses TOML format for configuration - simple key-value pairs and sections.
+#
+# When you run `luat dev`, this file tells Luat:
+#   - Where to find your templates and routes
+#   - What port to run the dev server on
+#   - What frontend tools to use (Tailwind, TypeScript, etc.)
+#   - How to build for production
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# PROJECT METADATA
+# ------------------------------------------------------------------------------
+# Basic information about your project. The name is used for logging and
+# the version helps track releases.
+[project]
+name = "{{project_name}}"
+version = "0.1.0"
+
+# ------------------------------------------------------------------------------
+# DEVELOPMENT SERVER
+# ------------------------------------------------------------------------------
+# Settings for `luat dev` command.
+# - port: The HTTP port your dev server runs on (default: 3000)
+# - host: The network interface to bind to (127.0.0.1 = localhost only)
+# - templates_dir: Where Luat looks for your route templates
+# - public_dir: Where compiled frontend assets go (CSS, JS)
+[dev]
+port = 3000
+host = "127.0.0.1"
+templates_dir = "src/routes"
+public_dir = "public"
+
+# ------------------------------------------------------------------------------
+# BUILD CONFIGURATION
+# ------------------------------------------------------------------------------
+# Settings for `luat build` command (production builds).
+# - output_dir: Where the compiled production bundle goes
+# - bundle_format: "source" keeps files readable, "binary" for deployment
+[build]
+output_dir = "dist"
+bundle_format = "source"
+
+# ------------------------------------------------------------------------------
+# ROUTING CONFIGURATION
+# ------------------------------------------------------------------------------
+# Luat supports two routing styles:
+#
+# 1. SVELTEKIT-STYLE (simplified = false) - RECOMMENDED
+#    Uses +page.luat, +layout.luat, +server.lua convention:
+#      src/routes/+page.luat          -> /
+#      src/routes/about/+page.luat    -> /about
+#      src/routes/blog/[slug]/+page.luat -> /blog/:slug (dynamic route)
+#
+# 2. SIMPLE FILE-BASED (simplified = true)
+#    Direct file-to-route mapping:
+#      templates/about.luat -> /about
+#
+# This example uses SvelteKit-style for better organization of layouts,
+# server logic, and nested routes.
+[routing]
+simplified = false
+routes_dir = "src/routes"
+lib_dir = "src/lib"
+static_dir = "static"
+app_html = "src/app.html"
+
+# ------------------------------------------------------------------------------
+# FRONTEND TOOLS
+# ------------------------------------------------------------------------------
+# Luat can automatically compile your frontend assets.
+#
+# TAILWIND CSS:
+#   Utility-first CSS framework. Luat scans your templates for classes
+#   and generates only the CSS you actually use.
+#
+# ESBUILD:
+#   Ultra-fast bundler for TypeScript/JavaScript. Compiles your client-side
+#   code from assets/js/ to public/js/.
+#
+# The tailwind_content array tells Tailwind which files to scan for classes.
+[frontend]
+enabled = ["tailwind", "esbuild"]
+tailwind_version = "4.0.5"
+tailwind_content = ["src/**/*.luat", "src/**/*.lua"]
+
+# Uncomment to enable additional tools:
+# enabled = ["tailwind", "sass", "typescript"]
+# sass_version = "1.77.8"
+# sass_entrypoint = "assets/css/app.css"
+# sass_output = "public/css/app.css"
+# esbuild_version = "0.24.0"
+# typescript_entrypoint = "assets/js/app.ts"
+# typescript_output = "public/js/app.js"

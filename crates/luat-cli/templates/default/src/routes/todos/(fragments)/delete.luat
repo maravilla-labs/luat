@@ -1,0 +1,41 @@
+{/*
+================================================================================
+TODO DELETE FRAGMENT (routes/todos/(fragments)/delete.luat)
+================================================================================
+Returns an empty response to remove the deleted todo item.
+Also includes an out-of-band update for the footer count.
+
+TRIGGERED BY:
+  POST /todos?/delete with { id: todo_id }
+
+HOW DELETION WORKS:
+  1. Server deletes the todo from KV storage
+  2. This fragment returns empty content for the todo item
+  3. HTMX replaces the todo <li> with nothing (removes it)
+  4. Out-of-band update refreshes the count in the footer
+
+The fragment intentionally returns minimal content - just the
+count update. The empty response for the main target causes
+the todo item to be removed from the DOM.
+================================================================================
+*/}
+
+<script>
+    -- Handle singular/plural for "item" text 
+    local itemsText = "items"
+    if props.counts and props.counts.active == 1 then
+        itemsText = "item"
+    end
+</script>
+
+{/* Item deleted - empty content removes the element from DOM */}
+
+{/*
+OUT-OF-BAND COUNT UPDATE
+Updates the footer counter to reflect the deletion.
+*/}
+{#if props.counts}
+    <span id="todo-count" hx-swap-oob="true">
+        <strong>{props.counts.active}</strong> {itemsText} left
+    </span>
+{/if}

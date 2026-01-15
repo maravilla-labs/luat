@@ -1,0 +1,19 @@
+<script>
+    local TodoItem = require("lib/components/TodoItem")
+
+    local itemsText = "items"
+    if props.counts and props.counts.active == 1 then
+        itemsText = "item"
+    end
+</script>
+
+{#each props.todos as todo}
+    <TodoItem todo={todo} />
+{/each}
+
+<!-- Out of band update for footer counts -->
+{#if props.counts}
+    <span id="todo-count" hx-swap-oob="true">
+        <strong>{props.counts.active}</strong> {itemsText} left
+    </span>
+{/if}

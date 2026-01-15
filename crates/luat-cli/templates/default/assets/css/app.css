@@ -1,0 +1,566 @@
+/**
+ * =============================================================================
+ * MAIN STYLESHEET (assets/css/app.css)
+ * =============================================================================
+ * Custom CSS extending Tailwind CSS for animations and visual effects.
+ *
+ * TAILWIND CSS 4:
+ *   This project uses Tailwind CSS 4 with the new @import syntax.
+ *   Most styling is done via utility classes in templates.
+ *   This file contains custom CSS that can't be expressed as utilities.
+ *
+ * SECTIONS:
+ *   1. Tailwind import and dark mode config
+ *   2. Animated background blobs (decorative)
+ *   3. Navigation indicator animations
+ *   4. View Transitions API - Todo list FLIP animations
+ *   5. View Transitions API - Blog shared element transitions
+ *   6. Tiptap editor styles
+ *
+ * VIEW TRANSITIONS API:
+ *   Modern browsers support CSS-based page transitions.
+ *   Elements with matching view-transition-name animate automatically.
+ *   The ::view-transition-* pseudo-elements control the animations.
+ *
+ * BUILD PROCESS:
+ *   Vite processes this file and outputs to static/css/app.css.
+ *   Tailwind scans templates to generate only used utility classes.
+ * =============================================================================
+ */
+
+/* Import Tailwind CSS 4 */
+@import "tailwindcss";
+
+/* =============================================================================
+   DARK MODE CONFIGURATION
+   =============================================================================
+   Tailwind CSS 4 uses @custom-variant for dark mode.
+   This enables the "class" strategy - dark mode activates when
+   <html class="dark"> is set (controlled by Alpine.js in the layout).
+============================================================================= */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* =============================================================================
+   ANIMATED BACKGROUND BLOBS
+   =============================================================================
+   Decorative floating blobs that add visual interest to the background.
+   These are subtle, slow-moving gradients that create depth.
+
+   Used in: +layout.luat (the three .blob-* elements)
+
+   ANIMATION TECHNIQUE:
+     - Each blob has a unique animation with different timing
+     - Transform includes both translate and scale for organic movement
+     - Long durations (20-25s) create a calm, ambient effect
+============================================================================= */
+
+@keyframes blob-drift-1 {
+  0%, 100% {
+    transform: translate(0, 0) scale(1);
+  }
+  25% {
+    transform: translate(30px, -50px) scale(1.05);
+  }
+  50% {
+    transform: translate(-20px, 20px) scale(0.95);
+  }
+  75% {
+    transform: translate(50px, 30px) scale(1.02);
+  }
+}
+
+@keyframes blob-drift-2 {
+  0%, 100% {
+    transform: translate(0, 0) scale(1);
+  }
+  25% {
+    transform: translate(-40px, 30px) scale(0.95);
+  }
+  50% {
+    transform: translate(30px, -40px) scale(1.05);
+  }
+  75% {
+    transform: translate(-20px, -20px) scale(1);
+  }
+}
+
+@keyframes blob-drift-3 {
+  0%, 100% {
+    transform: translate(-50%, -50%) scale(1);
+  }
+  20% {
+    transform: translate(calc(-50% + 100px), calc(-50% + 80px)) scale(1.1);
+  }
+  40% {
+    transform: translate(calc(-50% - 80px), calc(-50% - 100px)) scale(0.9);
+  }
+  60% {
+    transform: translate(calc(-50% + 120px), calc(-50% - 60px)) scale(1.05);
+  }
+  80% {
+    transform: translate(calc(-50% - 60px), calc(-50% + 90px)) scale(0.95);
+  }
+}
+
+/* Apply animations to blob elements */
+.blob-1 {
+  animation: blob-drift-1 20s ease-in-out infinite;
+}
+
+.blob-2 {
+  animation: blob-drift-2 25s ease-in-out infinite;
+}
+
+.blob-3 {
+  animation: blob-drift-3 22s ease-in-out infinite;
+}
+
+/* =============================================================================
+   CONFIRM DIALOG ANIMATIONS (iOS-style)
+   =============================================================================
+   Smooth, sequenced animations for the confirm dialog:
+   1. Backdrop fades in with blur
+   2. Dialog pops in with scale + slight bounce (delayed)
+   3. On close: dialog scales down, then backdrop fades out
+
+   TIMING:
+     - Backdrop: 200ms ease-out
+     - Dialog: 250ms with spring easing, 100ms delay after backdrop
+============================================================================= */
+
+/* Backdrop fade in */
+@keyframes confirm-backdrop-in {
+  from {
+    opacity: 0;
+    backdrop-filter: blur(0px);
+  }
+  to {
+    opacity: 1;
+    backdrop-filter: blur(4px);
+  }
+}
+
+/* Backdrop fade out */
+@keyframes confirm-backdrop-out {
+  from {
+    opacity: 1;
+    backdrop-filter: blur(4px);
+  }
+  to {
+    opacity: 0;
+    backdrop-filter: blur(0px);
+  }
+}
+
+/* Dialog pop in (iOS-style with slight overshoot) */
+@keyframes confirm-dialog-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.8) translateY(10px);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.02) translateY(-2px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* Dialog pop out */
+@keyframes confirm-dialog-out {
+  from {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.9) translateY(10px);
+  }
+}
+
+/* Apply animations to dialog */
+#confirm-dialog::backdrop {
+  background: rgba(0, 0, 0, 0);
+  backdrop-filter: blur(0px);
+  animation: confirm-backdrop-in 200ms ease-out forwards;
+}
+
+#confirm-dialog[open] > div {
+  animation: confirm-dialog-in 300ms cubic-bezier(0.34, 1.56, 0.64, 1) 100ms both;
+}
+
+/* Closing state animations */
+#confirm-dialog.closing::backdrop {
+  animation: confirm-backdrop-out 200ms ease-in 100ms forwards;
+}
+
+#confirm-dialog.closing > div {
+  animation: confirm-dialog-out 200ms ease-in forwards;
+}
+
+/* =============================================================================
+   NAVIGATION INDICATOR
+   =============================================================================
+   The navigation has animated indicators that move between nav items.
+   Two styles are provided:
+     - nav-dot: A small glowing dot (current implementation)
+     - nav-underline: An underline bar (alternative)
+
+   VIEW TRANSITIONS:
+     The view-transition-name property enables the browser to animate
+     the indicator smoothly from one nav item to another during page
+     navigation. This creates a "shared element transition" effect.
+============================================================================= */
+
+.nav-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #c084fc, #f472b6);
+  box-shadow: 0 0 6px rgba(192, 132, 252, 0.6);
+  /* This name links the dot across pages for animation */
+  view-transition-name: nav-dot;
+}
+
+.nav-underline {
+  background: linear-gradient(90deg, #c084fc, #f472b6);
+  box-shadow: 0 0 8px rgba(192, 132, 252, 0.4);
+  view-transition-name: nav-underline;
+}
+
+/* Keep navigation bar stable during page transitions */
+::view-transition-old(main-nav),
+::view-transition-new(main-nav) {
+  animation: none;
+}
+
+::view-transition-group(main-nav) {
+  animation: none;
+}
+
+/* Animate the dot moving between nav items */
+::view-transition-old(nav-dot),
+::view-transition-new(nav-dot) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+::view-transition-group(nav-dot) {
+  animation-duration: 0.3s;
+  animation-delay: 200ms;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Animate the underline moving between nav items */
+::view-transition-old(nav-underline),
+::view-transition-new(nav-underline) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+::view-transition-group(nav-underline) {
+  animation-duration: 0.3s;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* =============================================================================
+   TODO LIST VIEW TRANSITIONS (FLIP Animations)
+   =============================================================================
+   FLIP = First, Last, Invert, Play
+   This technique animates elements to their new positions smoothly.
+
+   HOW IT WORKS:
+     1. Each todo item has a unique view-transition-name (set via JS)
+     2. When items reorder, the browser calculates position changes
+     3. The ::view-transition-* pseudo-elements handle the animation
+
+   ANIMATION TYPES:
+     - Existing items: Slide smoothly to new positions
+     - New items: Fade in + slide down
+     - Removed items: Fade out + slide right
+============================================================================= */
+
+/* Default animation for todo items */
+::view-transition-old(todo-*),
+::view-transition-new(todo-*) {
+  animation-duration: 0.3s;
+  animation-timing-function: ease-out;
+}
+
+/* All view transition groups animate position changes */
+::view-transition-group(*) {
+  animation-duration: 0.3s;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* New items: fade in + slide down */
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(-20px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Removed items: fade out + slide right */
+@keyframes slide-out {
+  from {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(50px) scale(0.9);
+  }
+}
+
+/* Apply to new todo items entering (when they're the only transition) */
+::view-transition-new(todo-*):only-child {
+  animation: slide-in 0.3s ease-out;
+}
+
+/* Apply to todo items leaving (when they're the only transition) */
+::view-transition-old(todo-*):only-child {
+  animation: slide-out 0.25s ease-in;
+}
+
+/* Crossfade for items being updated (toggle, edit) */
+::view-transition-old(todo-*) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+::view-transition-new(todo-*) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+/* =============================================================================
+   FALLBACK FOR BROWSERS WITHOUT VIEW TRANSITIONS
+   =============================================================================
+   @supports checks for View Transitions API support.
+   If not supported, fall back to CSS transitions and htmx classes.
+============================================================================= */
+
+@supports not (view-transition-name: test) {
+  #todo-list > li {
+    transition: all 0.3s ease-out;
+  }
+
+  /* htmx adds these classes during swap operations */
+  .htmx-added {
+    animation: slide-in 0.3s ease-out;
+  }
+
+  .htmx-swapping {
+    animation: slide-out 0.25s ease-in;
+  }
+}
+
+/* =============================================================================
+   INTERACTIVE ELEMENT TRANSITIONS
+   =============================================================================
+   Micro-interactions for todo list controls.
+   These enhance the tactile feel of the UI.
+============================================================================= */
+
+/* Checkbox press effect - shrinks slightly when clicked */
+#todo-list > li button[aria-pressed] {
+  @apply transition-transform duration-150 active:scale-90;
+}
+
+/* Delete button hover - grows slightly on hover */
+#todo-list > li button[aria-label^="Delete"] {
+  @apply transition-all duration-150 hover:scale-110;
+}
+
+/* Smooth color transitions for todo items */
+#todo-list > li {
+  @apply transition-colors duration-200;
+}
+
+/* =============================================================================
+   BLOG VIEW TRANSITIONS (Android-style Shared Elements)
+   =============================================================================
+   Blog pages use shared element transitions for a native app feel.
+   When navigating from blog list to detail, matching elements animate.
+
+   SHARED ELEMENTS:
+     - blog-image-{slug}: Cover image animates from card to full width
+     - blog-title-{slug}: Title animates from card to detail header
+     - blog-excerpt-{slug}: Excerpt/date text animates into place
+
+   The view-transition-name is set via inline styles in the templates,
+   with the slug making each element unique.
+============================================================================= */
+
+/* Shared element transitions use Material Design easing */
+::view-transition-group(blog-image-*),
+::view-transition-group(blog-title-*),
+::view-transition-group(blog-excerpt-*) {
+  animation-duration: 0.35s;
+  animation-timing-function: cubic-bezier(0.2, 0, 0, 1); /* Material Design easing */
+}
+
+/* Disable crossfade for shared elements (pure position animation) */
+::view-transition-old(blog-image-*),
+::view-transition-new(blog-image-*),
+::view-transition-old(blog-title-*),
+::view-transition-new(blog-title-*),
+::view-transition-old(blog-excerpt-*),
+::view-transition-new(blog-excerpt-*) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+/* Image keeps aspect ratio during transition */
+::view-transition-old(blog-image-*),
+::view-transition-new(blog-image-*) {
+  object-fit: cover;
+}
+
+/* Staggered fade-in for content elements on detail page */
+@keyframes blog-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes blog-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Content appears with staggered delay for visual hierarchy */
+.blog-content {
+  animation: blog-fade-up 0.4s cubic-bezier(0.2, 0, 0, 1) 0.15s both;
+}
+
+.blog-action {
+  animation: blog-fade-in 0.3s cubic-bezier(0.2, 0, 0, 1) 0.2s both;
+}
+
+.blog-back {
+  animation: blog-fade-up 0.4s cubic-bezier(0.2, 0, 0, 1) 0.25s both;
+}
+
+/* Disable root page fade - only animate specific elements */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+}
+
+/* Blog list staggered entrance - cards fade in sequentially */
+.grid > a[href^="/blog/"] {
+  animation: blog-fade-up 0.4s cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+/* Each card has increasing delay for stagger effect */
+.grid > a[href^="/blog/"]:nth-child(1) { animation-delay: 0.05s; }
+.grid > a[href^="/blog/"]:nth-child(2) { animation-delay: 0.1s; }
+.grid > a[href^="/blog/"]:nth-child(3) { animation-delay: 0.15s; }
+.grid > a[href^="/blog/"]:nth-child(4) { animation-delay: 0.2s; }
+.grid > a[href^="/blog/"]:nth-child(5) { animation-delay: 0.25s; }
+.grid > a[href^="/blog/"]:nth-child(n+6) { animation-delay: 0.3s; }
+
+/* =============================================================================
+   TIPTAP EDITOR STYLES
+   =============================================================================
+   Styles for the Tiptap rich text editor used in blog post creation.
+   ProseMirror is the underlying editor framework.
+
+   These styles provide:
+     - Placeholder text when empty
+     - Proper spacing between elements
+     - List styling (ul/ol)
+     - Blockquote styling
+     - Code and code block styling
+     - Heading hierarchy
+     - Image and link styling
+============================================================================= */
+
+/* Remove default outline from editor */
+.ProseMirror {
+  outline: none;
+}
+
+/* Placeholder text - shown when editor is empty */
+.ProseMirror p.is-editor-empty:first-child::before {
+  @apply text-gray-400 pointer-events-none float-left h-0;
+  content: attr(data-placeholder);
+}
+
+/* Spacing between content blocks */
+.ProseMirror > * + * {
+  margin-top: 0.75em;
+}
+
+/* List indentation */
+.ProseMirror ul,
+.ProseMirror ol {
+  padding-left: 1.5rem;
+}
+
+.ProseMirror ul {
+  list-style-type: disc;
+}
+
+.ProseMirror ol {
+  list-style-type: decimal;
+}
+
+/* Blockquote styling */
+.ProseMirror blockquote {
+  @apply border-l-4 border-gray-300 pl-4 italic text-gray-600;
+}
+
+/* Inline code styling */
+.ProseMirror code {
+  @apply bg-gray-100 rounded px-1 py-0.5 font-mono text-sm;
+}
+
+/* Code block styling */
+.ProseMirror pre {
+  @apply bg-gray-900 text-gray-100 rounded-lg p-4 overflow-x-auto;
+}
+
+.ProseMirror pre code {
+  @apply bg-transparent p-0;
+}
+
+/* Heading hierarchy */
+.ProseMirror h2 {
+  @apply text-2xl font-bold mt-6 mb-3;
+}
+
+.ProseMirror h3 {
+  @apply text-xl font-semibold mt-5 mb-2;
+}
+
+.ProseMirror h4 {
+  @apply text-lg font-semibold mt-4 mb-2;
+}
+
+/* Image styling */
+.ProseMirror img {
+  @apply max-w-full h-auto rounded-lg my-4;
+}
+
+/* Link styling */
+.ProseMirror a {
+  @apply text-blue-600 underline;
+}

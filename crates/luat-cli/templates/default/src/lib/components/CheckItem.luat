@@ -1,0 +1,38 @@
+{/*
+================================================================================
+CHECK ITEM COMPONENT (lib/components/CheckItem.luat)
+================================================================================
+A simple list item with a green checkmark icon.
+Used for displaying feature lists, completed items, or status indicators.
+
+USAGE:
+  <ul>
+    <CheckItem text="File-based routing with +page.luat" />
+    <CheckItem text="Server-side data loading" />
+    <CheckItem text="API routes with +server.lua" />
+  </ul>
+
+PROPS:
+  text (string): The text to display next to the checkmark
+
+STYLING:
+  - Green checkmark in a subtle green circle
+  - Dark mode compatible with automatic color adjustment
+  - Consistent spacing with flexbox
+
+NOTE:
+  This is a presentational component - it doesn't have interactive state.
+  For interactive checkboxes, see the TodoItem component.
+================================================================================
+*/}
+
+<script>
+local text = props.text or ""
+</script>
+
+{/* Simple list item with checkmark icon and text */}
+<li class="flex items-center gap-3 text-gray-700 dark:text-gray-300 transition-colors">
+    {/* Green circle with checkmark - purely decorative */}
+    <span class="w-6 h-6 rounded-full bg-emerald-400/20 dark:bg-emerald-500/20 flex items-center justify-center text-emerald-600 dark:text-emerald-400 text-sm">&#10003;</span>
+    {text}
+</li>

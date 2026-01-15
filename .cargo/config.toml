@@ -1,0 +1,14 @@
+# Cargo configuration for the Luat project
+
+# Emscripten target configuration
+[target.wasm32-unknown-emscripten]
+rustflags = [
+    # Make module exportable (works with both CommonJS and ES modules)
+    "-C", "link-arg=-sMODULARIZE=1",
+    # Export runtime methods for string handling and function calling
+    "-C", "link-arg=-sEXPORTED_RUNTIME_METHODS=ccall,cwrap,UTF8ToString,stringToNewUTF8,getValue,setValue,stackSave,stackAlloc,stackRestore",
+    # Allow memory growth for dynamic allocations
+    "-C", "link-arg=-sALLOW_MEMORY_GROWTH=1",
+    # Target web environment only (avoids Node.js-specific code)
+    "-C", "link-arg=-sENVIRONMENT=web",
+]

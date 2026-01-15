@@ -1,0 +1,30 @@
+{/*
+================================================================================
+TODO CANCEL EDIT FRAGMENT (routes/todos/(fragments)/cancelEdit.luat)
+================================================================================
+Returns the original todo item, discarding any edit changes.
+Triggered when user presses Escape during editing.
+
+TRIGGERED BY:
+  POST /todos?/cancelEdit with { id: todo_id }
+  (Hidden button triggered by Escape key in editForm.luat)
+
+CANCEL FLOW:
+  1. User is in edit mode (editForm.luat displayed)
+  2. User presses Escape key
+  3. Hidden button posts to ?/cancelEdit
+  4. Server returns original todo data (no changes saved)
+  5. This fragment renders normal TodoItem display
+
+This allows users to abandon edits without saving changes.
+================================================================================
+*/}
+
+<script>
+    local TodoItem = require("lib/components/TodoItem")
+</script>
+
+{/* Render the original todo item (unchanged) */}
+{#if props.todo}
+    <TodoItem todo={props.todo} />
+{/if}

@@ -1,0 +1,27 @@
+[project]
+name = "routing-example"
+version = "0.1.0"
+
+[dev]
+port = 3000
+host = "127.0.0.1"
+templates_dir = "src/routes"
+public_dir = "public"
+
+[build]
+output_dir = "dist"
+bundle_format = "source"
+
+[routing]
+# SvelteKit-style routing (default)
+simplified = false
+routes_dir = "src/routes"
+lib_dir = "src/lib"
+static_dir = "static"
+app_html = "src/app.html"
+
+[frontend]
+enabled = ["tailwind"]
+tailwind_version = "4.0.5"
+tailwind_output = "public/css/tailwind.css"
+tailwind_content = ["src/**/*.luat", "src/**/*.html"]

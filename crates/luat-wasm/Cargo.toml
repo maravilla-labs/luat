@@ -1,0 +1,15 @@
+[package]
+name = "luat-wasm"
+version = "0.1.0"
+edition = "2021"
+description = "WebAssembly build of the Luat templating engine"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/maravilla-labs/luat"
+
+[[bin]]
+name = "luat-wasm"
+path = "src/main.rs"
+
+[dependencies]
+luat = { path = "../luat", default-features = false, features = ["wasm"] }
+serde_json = "1.0"

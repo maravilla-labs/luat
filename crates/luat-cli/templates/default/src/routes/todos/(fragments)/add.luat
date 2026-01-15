@@ -1,0 +1,61 @@
+{/*
+================================================================================
+TODO ADD FRAGMENT (routes/todos/(fragments)/add.luat)
+================================================================================
+Fragment template returned when a new todo is added.
+Demonstrates the fragment pattern for partial page updates.
+
+WHAT ARE FRAGMENTS?
+  Fragments are partial templates that return just the HTML needed for
+  HTMX updates, not a full page. They're placed in (fragments)/ directory.
+
+  The parentheses in the directory name (fragments) make it a "route group" -
+  it organizes files without affecting the URL structure.
+
+HOW IT'S USED:
+  1. User submits the add form
+  2. HTMX sends POST to /todos?/add
+  3. Server runs the "add" action in +page.server.lua
+  4. Server renders this fragment with the action's returned data
+  5. HTMX inserts the fragment HTML into #todo-list
+
+PROPS AVAILABLE:
+  props.todo - The newly created todo object
+  props.counts - Updated counts for out-of-band update
+  props.error - Error message if validation failed
+
+OUT-OF-BAND UPDATES:
+  The hx-swap-oob="true" attribute tells HTMX to also update the
+  #todo-count element, even though the main target is #todo-list.
+  This keeps the item count in sync without additional requests.
+================================================================================
+*/}
+
+<script>
+    local TodoItem = require("lib/components/TodoItem")
+
+    -- Compute singular/plural for item count 
+    local itemsText = "items"
+    if props.counts and props.counts.active == 1 then
+        itemsText = "item"
+    end
+</script>
+
+{/* Handle error case silently (form validation keeps existing state) */}
+{#if props.error}
+    <!-- Error is handled silently, form stays as is -->
+{:else}
+    {/* Render the new todo item */}
+    <TodoItem todo={props.todo} />
+{/if}
+
+{/*
+OUT-OF-BAND UPDATE
+This span updates the footer count even though it's not the hx-target.
+hx-swap-oob="true" tells HTMX to find #todo-count and replace it.
+*/}
+{#if props.counts}
+    <span id="todo-count" hx-swap-oob="true">
+        <strong>{props.counts.active}</strong> {itemsText} left
+    </span>
+{/if}

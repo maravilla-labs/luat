@@ -1,0 +1,16 @@
+<script>
+    local TodoItem = require("../../lib/components/TodoItem")
+</script>
+
+{#if props.error}
+    <!-- Error is handled silently, form stays as is -->
+{:else}
+    <TodoItem todo={props.todo} />
+{/if}
+
+<!-- Out of band update for footer counts -->
+{#if props.counts}
+    <span id="todo-count" hx-swap-oob="true">
+        <strong>{props.counts.active}</strong> {props.counts.active == 1 and "item" or "items"} left
+    </span>
+{/if}

@@ -1,0 +1,92 @@
+{/*
+================================================================================
+BLOG POST DETAIL PAGE (routes/blog/[slug]/+page.luat)
+================================================================================
+Displays a single blog post with full content.
+Demonstrates dynamic routes and View Transitions.
+
+URL: /blog/:slug (e.g., /blog/hello-world)
+
+DYNAMIC ROUTES:
+  The [slug] directory name creates a dynamic route segment.
+  The slug value is available in ctx.params.slug on the server.
+
+DATA FROM SERVER:
+  props.post - The full blog post object:
+    - slug, title, date, updated, excerpt, content, image_url
+
+VIEW TRANSITIONS:
+  Elements with view-transition-name matching the listing page
+  will animate smoothly during navigation.
+
+PAGE CONTEXT:
+  setPageContext("view_title", props.post.title) sets a context
+  value that can be used by layouts or other components.
+================================================================================
+*/}
+
+<script>
+local Button = require("lib/components/Button")
+-- Set the page title context for potential use by layouts 
+setPageContext("view_title", props.post.title)
+</script>
+
+{/* Article container with glassmorphism styling */}
+<article class="bg-white/30 dark:bg-gray-800/50 backdrop-blur-xl rounded-3xl border border-white/40 dark:border-gray-700/50 shadow-2xl shadow-black/10 overflow-hidden transition-colors">
+    {/*
+    COVER IMAGE
+    Only rendered if image_url exists.
+    view-transition-name enables animation from list view.
+    */}
+    {#if props.post.image_url and props.post.image_url ~= ""}
+        <div class="w-full h-64 md:h-80 overflow-hidden">
+            <img
+                src="{props.post.image_url}"
+                alt="{props.post.title}"
+                class="blog-image w-full h-full object-cover rounded-t-3xl"
+                style="view-transition-name: blog-image-{props.post.slug}"
+            />
+        </div>
+    {/if}
+
+    <div class="p-8">
+        {/* Header with title, date, and edit button */}
+        <div class="flex items-start justify-between mb-6">
+            <div>
+                {/*
+                ANIMATED TITLE
+                Matches the blog-title-{slug} from listing page
+                for smooth View Transition animation.
+                */}
+                <h1
+                    class="text-3xl font-light text-gray-800 dark:text-white mb-2 transition-colors"
+                    style="view-transition-name: blog-title-{props.post.slug}"
+                >{props.post.title}</h1>
+                <p
+                    class="text-gray-500 dark:text-gray-400 text-sm blog-meta transition-colors"
+                    style="view-transition-name: blog-excerpt-{props.post.slug}"
+                >
+                    Published on {props.post.date}
+                    {/* Show updated date if post was modified */}
+                    {#if props.post.updated}
+                        &middot; Updated {props.post.updated}
+                    {/if}
+                </p>
+            </div>
+            {/* Edit button links to the edit page */}
+            <Button variant="tertiary" size="sm" href="/blog/{props.post.slug}/edit" class="blog-action">Edit</Button>
+        </div>
+
+        {/*
+        POST CONTENT
+        {@html ...} renders raw HTML content from the editor.
+        "prose" classes from Tailwind Typography plugin style the content.
+        */}
+        <div class="blog-content prose prose-lg dark:prose-invert max-w-none text-gray-700 dark:text-gray-300 leading-relaxed mb-8 transition-colors">
+            {@html props.post.content}
+        </div>
+
+        {/* Back link to blog listing */}
+        <Button variant="link" href="/blog" class="blog-back">&larr; Back to blog</Button>
+    </div>
+</article>

@@ -1,0 +1,27 @@
+[project]
+name = "{{project_name}}"
+version = "0.1.0"
+
+[dev]
+port = 3000
+host = "127.0.0.1"
+templates_dir = "src/routes"
+public_dir = "public"
+
+[build]
+output_dir = "dist"
+bundle_format = "source"
+
+[routing]
+simplified = false
+routes_dir = "src/routes"
+lib_dir = "src/lib"
+app_html = "src/app.html"
+
+[frontend]
+enabled = ["tailwind", "esbuild"]
+tailwind_version = "4.0.5"
+tailwind_content = ["src/**/*.luat", "src/**/*.lua"]
+esbuild_version = "0.24.0"
+typescript_entry = "assets/js/app.ts"
+typescript_output = "public/js/app.js"

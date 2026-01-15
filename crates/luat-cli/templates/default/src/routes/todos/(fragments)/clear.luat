@@ -1,0 +1,42 @@
+{/*
+================================================================================
+TODO CLEAR COMPLETED FRAGMENT (routes/todos/(fragments)/clear.luat)
+================================================================================
+Returns the remaining active todos after clearing completed items.
+Called when user clicks "Clear completed" button.
+
+TRIGGERED BY:
+  POST /todos?/clear
+
+BEHAVIOR:
+  1. Server deletes all completed todos from KV storage
+  2. This fragment returns only the remaining active todos
+  3. HTMX replaces the entire todo list with active items only
+  4. Count updates to reflect new state
+
+The response is similar to the "all" or "active" fragments -
+it provides a fresh list of todos to replace the current view.
+================================================================================
+*/}
+
+<script>
+    local TodoItem = require("lib/components/TodoItem")
+
+    -- Handle singular/plural for "item" text 
+    local itemsText = "items"
+    if props.counts and props.counts.active == 1 then
+        itemsText = "item"
+    end
+</script>
+
+{/* Render remaining todos (completed items have been removed) */}
+{#each props.todos as todo}
+    <TodoItem todo={todo} />
+{/each}
+
+{/* Out-of-band count update */}
+{#if props.counts}
+    <span id="todo-count" hx-swap-oob="true">
+        <strong>{props.counts.active}</strong> {itemsText} left
+    </span>
+{/if}

@@ -1,0 +1,15 @@
+<h1 class="text-3xl font-bold text-slate-900 mb-6">Blog</h1>
+<p class="text-sm text-gray-500 mb-4">Current date: {props.date}</p>
+
+{#if props.posts}
+    <div class="space-y-4">
+        {#each props.posts as post}
+            <a href="/blog/{post.slug}" class="block bg-white rounded-lg shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow">
+                <h2 class="text-xl font-semibold text-slate-800 mb-2">{post.title}</h2>
+                <p class="text-gray-600">{post.excerpt}</p>
+            </a>
+        {/each}
+    </div>
+{:else}
+    <p class="text-gray-500">No posts yet.</p>
+{/if}
