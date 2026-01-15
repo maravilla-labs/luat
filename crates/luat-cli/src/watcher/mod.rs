@@ -14,7 +14,7 @@
 //! - Recursive directory watching
 
 use notify::{RecommendedWatcher, RecursiveMode};
-use notify_debouncer_full::{new_debouncer, Debouncer, FileIdMap};
+use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, RecommendedCache};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::Duration;
@@ -25,9 +25,9 @@ use std::time::Duration;
 /// events to only trigger on relevant file types.
 pub struct FileWatcher {
     #[allow(dead_code)]
-    debouncer: Debouncer<RecommendedWatcher, FileIdMap>,
+    debouncer: Debouncer<RecommendedWatcher, RecommendedCache>,
     #[allow(dead_code)]
-    rx: mpsc::Receiver<Result<Vec<notify_debouncer_full::DebouncedEvent>, Vec<notify::Error>>>,
+    rx: mpsc::Receiver<DebounceEventResult>,
 }
 
 impl FileWatcher {
@@ -51,7 +51,7 @@ impl FileWatcher {
         let mut debouncer = new_debouncer(
             Duration::from_millis(750),
             None,
-            move |result: Result<Vec<notify_debouncer_full::DebouncedEvent>, Vec<notify::Error>>| {
+            move |result: DebounceEventResult| {
                 if let Ok(events) = &result {
                     // Collect changed paths with relevant extensions
                     let changed_paths: Vec<PathBuf> = events
