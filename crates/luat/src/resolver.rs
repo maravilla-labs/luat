@@ -31,27 +31,16 @@ use crate::error::{Result, LuatError};
 use std::fs;
 
 /// Converts a Path to a normalized string with forward slashes.
-/// On Windows, uses path components to rebuild with `/` separators.
+/// On Windows, strips extended path prefix (\\?\) and converts backslashes.
 #[inline]
 pub fn path_to_string<P: AsRef<Path>>(path: P) -> String {
     #[cfg(windows)]
     {
-        use std::path::Component;
-        let path = path.as_ref();
-        let mut result = String::new();
-        for (i, component) in path.components().enumerate() {
-            if i > 0 {
-                result.push('/');
-            }
-            match component {
-                Component::Prefix(p) => result.push_str(&p.as_os_str().to_string_lossy()),
-                Component::RootDir => result.push('/'),
-                Component::CurDir => result.push('.'),
-                Component::ParentDir => result.push_str(".."),
-                Component::Normal(s) => result.push_str(&s.to_string_lossy()),
-            }
-        }
-        result
+        let s = path.as_ref().to_string_lossy();
+        // Strip Windows extended path prefix (\\?\)
+        let s = s.strip_prefix(r"\\?\").unwrap_or(&s);
+        // Convert backslashes to forward slashes
+        s.replace('\\', "/")
     }
     #[cfg(not(windows))]
     {
