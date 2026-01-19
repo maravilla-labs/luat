@@ -99,4 +99,4 @@ Licensed under either of [Apache-2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT) at y
 
 ## Credits
 
-Created and maintained by [Maravilla Labs](https://maravilla-labs.com).
+Created and maintained by [Maravilla Labs](https://github.com/maravilla-labs).
