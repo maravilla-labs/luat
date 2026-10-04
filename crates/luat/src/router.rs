@@ -166,6 +166,8 @@ pub fn path_to_pattern(path: &str) -> String {
 
 /// The router that handles route discovery and URL matching.
 pub struct Router {
+    /// The root `+error.luat`, used for requests no route matches.
+    root_error: Option<String>,
     /// matchit router for fast URL matching
     matcher: matchit::Router<usize>,
 
@@ -179,6 +181,7 @@ impl Router {
         Self {
             matcher: matchit::Router::new(),
             routes: Vec::new(),
+            root_error: None,
         }
     }
 
@@ -218,6 +221,11 @@ impl Router {
         for path_ref in paths {
             let path = path_ref.as_ref();
             let path_obj = Path::new(path);
+
+            // Directories starting with `_` are private: never routed.
+            if is_private(path_obj) {
+                continue;
+            }
 
             let file_name = path_obj
                 .file_name()
@@ -307,13 +315,21 @@ impl Router {
             }
         });
 
-        // Build the matchit router
+        // Build the matchit router. A route with [[optional]] segments is
+        // also registered without them.
         for (index, route) in routes.iter().enumerate() {
-            if let Err(e) = router.matcher.insert(&route.pattern, index) {
-                tracing::warn!("Could not register route {}: {}", route.pattern, e);
+            let mut patterns = vec![route.pattern.clone()];
+            if let Some(without) = pattern_without_optionals(&route.fs_path) {
+                patterns.push(without);
+            }
+            for pattern in patterns {
+                if let Err(e) = router.matcher.insert(&pattern, index) {
+                    tracing::warn!("Could not register route {}: {}", pattern, e);
+                }
             }
         }
 
+        router.root_error = errors_by_dir.get("").cloned();
         router.routes = routes;
         router
     }
@@ -332,7 +348,7 @@ impl Router {
                 let params: HashMap<String, String> = matched
                     .params
                     .iter()
-                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .map(|(k, v)| (k.to_string(), crate::ctx_helpers::decode_percent(v)))
                     .collect();
 
                 Some(route.with_params(params))
@@ -344,6 +360,19 @@ impl Router {
     /// Get all routes (for debugging/listing).
     pub fn routes(&self) -> &[Route] {
         &self.routes
+    }
+
+    /// The root `+error.luat`, if any. Use it for requests that match no
+    /// route (see `Engine::respond_not_found`).
+    pub fn root_error(&self) -> Option<&str> {
+        self.root_error.as_deref()
+    }
+
+    /// Discovers routes by walking `routes_dir`. Paths are relative to it,
+    /// with `/` separators, as [`from_paths`](Self::from_paths) expects.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "filesystem"))]
+    pub fn discover(routes_dir: &Path) -> std::io::Result<Self> {
+        Ok(Self::from_paths(route_files(routes_dir)?.into_iter()))
     }
 
     /// Collect all layouts from root to the given directory.
@@ -378,6 +407,57 @@ impl Default for Router {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// True when any directory in `path` starts with `_` (private folders).
+fn is_private(path: &Path) -> bool {
+    path.parent()
+        .into_iter()
+        .flat_map(|p| p.components())
+        .any(|c| c.as_os_str().to_string_lossy().starts_with('_'))
+}
+
+/// The route pattern with its `[[optional]]` segments left out, or `None`
+/// when it has none.
+fn pattern_without_optionals(fs_path: &str) -> Option<String> {
+    let segments: Vec<SegmentType> = Path::new(fs_path)
+        .components()
+        .filter_map(|c| c.as_os_str().to_str())
+        .map(SegmentType::parse)
+        .collect();
+    if !segments.iter().any(SegmentType::is_optional) {
+        return None;
+    }
+    let kept: Vec<String> = segments
+        .iter()
+        .filter(|s| !s.is_optional())
+        .map(SegmentType::to_pattern)
+        .collect();
+    Some(if kept.is_empty() {
+        "/".to_string()
+    } else {
+        format!("/{}", kept.join("/"))
+    })
+}
+
+/// Lists every file under `routes_dir`, relative to it, with `/` separators.
+#[cfg(all(not(target_arch = "wasm32"), feature = "filesystem"))]
+pub fn route_files(routes_dir: &Path) -> std::io::Result<Vec<String>> {
+    fn walk(dir: &Path, root: &Path, out: &mut Vec<String>) -> std::io::Result<()> {
+        for entry in std::fs::read_dir(dir)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                walk(&path, root, out)?;
+            } else if let Ok(rel) = path.strip_prefix(root) {
+                out.push(rel.to_string_lossy().replace('\\', "/"));
+            }
+        }
+        Ok(())
+    }
+    let mut files = Vec::new();
+    walk(routes_dir, routes_dir, &mut files)?;
+    files.sort();
+    Ok(files)
 }
 
 #[cfg(test)]

@@ -222,7 +222,8 @@ pub fn parse_cookie_header(header: &str) -> HashMap<String, String> {
     cookies
 }
 
-fn decode_percent(value: &str) -> String {
+/// Decodes `%XX` escapes; invalid escapes are kept as-is.
+pub(crate) fn decode_percent(value: &str) -> String {
     let bytes = value.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;

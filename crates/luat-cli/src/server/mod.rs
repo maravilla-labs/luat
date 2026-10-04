@@ -20,5 +20,5 @@ pub mod http;
 /// Live reload WebSocket server.
 pub mod livereload;
 /// Template loading and resolution.
-pub mod loader;
+pub mod request;
 pub mod response;

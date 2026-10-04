@@ -41,16 +41,14 @@ impl<R: ResourceResolver> Engine<R> {
             }
         }
 
-        let module = self.compile_entry(page_path(route)?)?;
         let context = self.to_value(JsonValue::Object(merged_props.clone()))?;
-        let mut body_html = self.render_in(&module, &context, &request_runtime)?;
+        let mut body_html = self.render_template(page_path(route)?, &context, Some(&request_runtime))?;
 
         for layout_path in route.layouts.iter().rev() {
             let mut layout_props = merged_props.clone();
             layout_props.insert("children".to_string(), JsonValue::String(body_html));
             let layout_context = self.to_value(JsonValue::Object(layout_props))?;
-            let layout_module = self.compile_entry(layout_path)?;
-            body_html = self.render_in(&layout_module, &layout_context, &request_runtime)?;
+            body_html = self.render_template(layout_path, &layout_context, Some(&request_runtime))?;
         }
 
         self.page_response(body_html, &request_runtime)

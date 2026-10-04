@@ -81,6 +81,22 @@ impl<R: ResourceResolver> Engine<R> {
         Ok(with_cookies(response, &jar))
     }
 
+    /// Responds 404 to a request that matched no route, rendering
+    /// `error_page` (normally [`Router::root_error`](crate::Router::root_error))
+    /// when there is one.
+    pub fn respond_not_found(&self, error_page: Option<&str>, request: &LuatRequest) -> LuatResponse {
+        let route = not_found_route(error_page);
+        self.error_response(&route, request, 404, "Not Found".to_string())
+    }
+
+    /// Async variant of [`respond_not_found`](Self::respond_not_found).
+    #[cfg(feature = "async-lua")]
+    pub async fn respond_not_found_async(&self, error_page: Option<&str>, request: &LuatRequest) -> LuatResponse {
+        let route = not_found_route(error_page);
+        self.error_response_async(&route, request, 404, "Not Found".to_string())
+            .await
+    }
+
     fn dispatch(&self, route: &Route, request: &LuatRequest, jar: &CookieJar) -> Result<LuatResponse> {
         if route.is_api_route() {
             return self.handle_api_route(route, request, jar);
@@ -138,7 +154,7 @@ impl<R: ResourceResolver> Engine<R> {
         };
         let rendered = self
             .error_props(status, &message)
-            .and_then(|props| self.render_page_module(error_page, &props));
+            .and_then(|props| self.render_template(error_page, &props, None));
         self.error_page_or_fallback(rendered, status, message)
     }
 
@@ -169,11 +185,6 @@ impl<R: ResourceResolver> Engine<R> {
 
     fn error_props(&self, status: u16, message: &str) -> Result<mlua::Value> {
         self.to_value(serde_json::json!({ "status": status, "message": message }))
-    }
-
-    fn render_page_module(&self, path: &str, props: &mlua::Value) -> Result<String> {
-        let module = self.compile_entry(path)?;
-        self.render(&module, props)
     }
 
     fn error_page_or_fallback(&self, rendered: Result<String>, status: u16, message: String) -> LuatResponse {
@@ -213,6 +224,23 @@ impl<R: ResourceResolver> Engine<R> {
     }
 
     /// Renders a template, falling back to a module preloaded from a bundle.
+    fn render_template(
+        &self,
+        module_path: &str,
+        context: &mlua::Value,
+        request_runtime: Option<&Table>,
+    ) -> Result<String> {
+        match (self.compile_entry(module_path), request_runtime) {
+            (Ok(module), Some(rt)) => self.render_in(&module, context, rt),
+            (Ok(module), None) => self.render(&module, context),
+            (Err(err), _) if self.is_not_found_error(&err) => {
+                self.render_from_bundle_sync_in(module_path, context, request_runtime)
+            }
+            (Err(err), _) => Err(err),
+        }
+    }
+
+    /// Async variant of [`render_template`](Self::render_template).
     #[cfg(feature = "async-lua")]
     async fn render_template_async(
         &self,
@@ -229,6 +257,13 @@ impl<R: ResourceResolver> Engine<R> {
             Err(err) => Err(err),
         }
     }
+}
+
+/// A placeholder route that only knows its error page.
+fn not_found_route(error_page: Option<&str>) -> Route {
+    let mut route = Route::new("", "");
+    route.error = error_page.map(str::to_string);
+    route
 }
 
 /// Appends the request's `Set-Cookie` headers to `response`.

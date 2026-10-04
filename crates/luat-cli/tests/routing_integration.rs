@@ -2,18 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
-//! Integration tests for the SvelteKit-style routing system.
-//!
-//! These tests verify the full routing pipeline using the actual crate code.
+//! Integration tests for SvelteKit-style routing as the dev server runs it:
+//! the core router discovers routes and the engine handles requests from
+//! files on disk.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
+use luat::{Engine, FileSystemResolver, LuatRequest, LuatResponse, NoOpCache, Router};
 use tempfile::tempdir;
-
-// Import the actual router from the crate
-use luat_cli::router::Router as LuatRouter;
-use luat_cli::server::loader::{run_api_handler, run_load_function, LoadContext};
 
 /// Create a test project structure in a temp directory
 fn setup_test_project(dir: &Path) {
@@ -29,14 +27,9 @@ fn setup_test_project(dir: &Path) {
     fs::create_dir_all(dir.join("public")).unwrap();
 
     // Create root layout
-    let root_layout = r#"<!DOCTYPE html>
-<html>
-<head><title>{props.title or "Test"}</title></head>
-<body>
-<nav>Test Nav</nav>
-<main>{@html props.children}</main>
-</body>
-</html>"#;
+    // The document shell (<!DOCTYPE>, <html>, <head>) lives in app.html.
+    let root_layout = r#"<nav>Test Nav</nav>
+<main>{@html props.children}</main>"#;
     fs::write(dir.join("src/routes/+layout.luat"), root_layout).unwrap();
 
     // Create home page
@@ -138,281 +131,170 @@ end"#;
     fs::write(dir.join("src/routes/api/hello/+server.lua"), api_server).unwrap();
 }
 
-#[cfg(test)]
+
+/// Discovers routes and builds an engine over the project's files.
+fn app(dir: &Path) -> (Router, Engine<FileSystemResolver>) {
+    let routes_dir = dir.join("src/routes");
+    let router = Router::discover(&routes_dir).unwrap();
+    let resolver = FileSystemResolver::new(&routes_dir).with_lib_dir(dir.join("src/lib"));
+    let engine = Engine::new(resolver, Box::new(NoOpCache::new())).unwrap();
+    (router, engine)
+}
+
+fn respond(router: &Router, engine: &Engine<FileSystemResolver>, request: LuatRequest) -> LuatResponse {
+    let route = router.match_url(&request.path).expect("route");
+    engine.set_development_mode(true).unwrap();
+    engine.respond(&route, &request).unwrap()
+}
+
+fn html(response: LuatResponse) -> String {
+    match response {
+        LuatResponse::Html { body, .. } => body,
+        other => panic!("expected html, got {other:?}"),
+    }
+}
+
+fn json(response: LuatResponse) -> (u16, serde_json::Value) {
+    match response {
+        LuatResponse::Json { status, body, .. } => (status, body),
+        other => panic!("expected json, got {other:?}"),
+    }
+}
+
 mod route_discovery_tests {
     use super::*;
 
     #[test]
-    fn test_discovers_all_routes() {
+    fn discovers_all_routes() {
         let dir = tempdir().unwrap();
         setup_test_project(dir.path());
-
-        let routes_dir = dir.path().join("src/routes");
-        let router = LuatRouter::discover(&routes_dir).unwrap();
-
-        let routes = router.routes();
-
-        // Should have: /, /about, /blog, /blog/{slug}, /users/{id}, /api/hello
-        assert!(routes.len() >= 6, "Expected at least 6 routes, found {}", routes.len());
+        let (router, _) = app(dir.path());
+        // /, /about, /blog, /blog/{slug}, /users/{id}, /api/hello
+        assert_eq!(router.routes().len(), 6);
     }
 
     #[test]
-    fn test_discovers_root_route() {
+    fn discovers_pages_api_routes_and_server_files() {
         let dir = tempdir().unwrap();
         setup_test_project(dir.path());
+        let (router, _) = app(dir.path());
 
-        let routes_dir = dir.path().join("src/routes");
-        let router = LuatRouter::discover(&routes_dir).unwrap();
-
-        let root = router.match_url("/");
-        assert!(root.is_some(), "Should discover root route");
-        assert!(root.unwrap().route.page.is_some(), "Root should have page");
+        assert!(router.match_url("/").unwrap().page.is_some());
+        assert!(router.match_url("/api/hello").unwrap().is_api_route());
+        assert!(router.match_url("/").unwrap().page_server.is_some());
+        assert!(router.match_url("/about").unwrap().page_server.is_none());
+        assert!(router.match_url("/blog/test").unwrap().page_server.is_some());
     }
 
     #[test]
-    fn test_discovers_static_routes() {
+    fn discovers_layouts() {
         let dir = tempdir().unwrap();
         setup_test_project(dir.path());
-
-        let routes_dir = dir.path().join("src/routes");
-        let router = LuatRouter::discover(&routes_dir).unwrap();
-
-        let about = router.match_url("/about");
-        assert!(about.is_some(), "Should discover /about route");
-
-        let blog = router.match_url("/blog");
-        assert!(blog.is_some(), "Should discover /blog route");
-    }
-
-    #[test]
-    fn test_discovers_dynamic_routes() {
-        let dir = tempdir().unwrap();
-        setup_test_project(dir.path());
-
-        let routes_dir = dir.path().join("src/routes");
-        let router = LuatRouter::discover(&routes_dir).unwrap();
-
-        // Test blog slug route
-        let post = router.match_url("/blog/my-first-post");
-        assert!(post.is_some(), "Should match /blog/my-first-post");
-        let post_match = post.unwrap();
-        assert_eq!(post_match.param("slug"), Some("my-first-post"));
-
-        // Test user id route
-        let user = router.match_url("/users/123");
-        assert!(user.is_some(), "Should match /users/123");
-        let user_match = user.unwrap();
-        assert_eq!(user_match.param("id"), Some("123"));
-    }
-
-    #[test]
-    fn test_discovers_api_routes() {
-        let dir = tempdir().unwrap();
-        setup_test_project(dir.path());
-
-        let routes_dir = dir.path().join("src/routes");
-        let router = LuatRouter::discover(&routes_dir).unwrap();
-
-        let api = router.match_url("/api/hello");
-        assert!(api.is_some(), "Should discover /api/hello route");
-        assert!(api.unwrap().route.is_api_route(), "Should be API route");
-    }
-
-    #[test]
-    fn test_discovers_layouts() {
-        let dir = tempdir().unwrap();
-        setup_test_project(dir.path());
-
-        let routes_dir = dir.path().join("src/routes");
-        let router = LuatRouter::discover(&routes_dir).unwrap();
-
-        // Home page should have root layout
-        let home = router.match_url("/");
-        assert!(home.is_some());
-        let home_route = home.unwrap().route;
-        assert!(!home_route.layouts.is_empty(), "Home should have layouts");
-
-        // Blog page should also have root layout
-        let blog = router.match_url("/blog");
-        assert!(blog.is_some());
-        let blog_route = blog.unwrap().route;
-        assert!(!blog_route.layouts.is_empty(), "Blog should have layouts");
-    }
-
-    #[test]
-    fn test_discovers_server_files() {
-        let dir = tempdir().unwrap();
-        setup_test_project(dir.path());
-
-        let routes_dir = dir.path().join("src/routes");
-        let router = LuatRouter::discover(&routes_dir).unwrap();
-
-        // Home should have server file
-        let home = router.match_url("/");
-        assert!(home.unwrap().route.server.is_some(), "Home should have +page.server.lua");
-
-        // About should NOT have server file
-        let about = router.match_url("/about");
-        assert!(about.unwrap().route.server.is_none(), "About should not have +page.server.lua");
-
-        // Blog post should have server file
-        let post = router.match_url("/blog/test");
-        assert!(post.unwrap().route.server.is_some(), "Blog post should have +page.server.lua");
+        let (router, _) = app(dir.path());
+        assert_eq!(router.match_url("/").unwrap().layouts, ["+layout.luat"]);
+        assert_eq!(router.match_url("/blog").unwrap().layouts, ["+layout.luat"]);
     }
 }
 
-#[cfg(test)]
-mod load_function_tests {
+mod request_tests {
     use super::*;
-    use axum::http::Method;
-    use mlua::Lua;
 
     #[test]
-    fn test_load_function_basic() {
+    fn load_function_props_reach_the_page_and_layout() {
         let dir = tempdir().unwrap();
         setup_test_project(dir.path());
+        let (router, engine) = app(dir.path());
 
-        let server_file = dir.path().join("src/routes/+page.server.lua");
-        let lua = Lua::new();
-        let ctx = LoadContext::new("/".to_string(), Method::GET, vec![]);
-
-        let result = run_load_function(&lua, &server_file, &ctx, None).unwrap();
-
-        // Check that props were returned
-        assert!(result.props.is_object());
-        let props = result.props.as_object().unwrap();
-        assert!(props.contains_key("message"));
-        assert_eq!(props.get("message").unwrap(), "Welcome!");
+        let body = html(respond(&router, &engine, LuatRequest::new("/", "GET")));
+        assert!(body.contains("<p>Welcome!</p>"), "{body}");
+        assert!(body.contains("<nav>Test Nav</nav>"), "layout missing: {body}");
     }
 
     #[test]
-    fn test_load_function_with_params() {
+    fn load_function_receives_route_params() {
         let dir = tempdir().unwrap();
         setup_test_project(dir.path());
+        let (router, engine) = app(dir.path());
 
-        let server_file = dir.path().join("src/routes/blog/[slug]/+page.server.lua");
-        let lua = Lua::new();
-        let ctx = LoadContext::new(
-            "/blog/hello-world".to_string(),
-            Method::GET,
-            vec![("slug".to_string(), "hello-world".to_string())],
-        );
-
-        let result = run_load_function(&lua, &server_file, &ctx, None).unwrap();
-
-        let props = result.props.as_object().unwrap();
-        assert!(props.contains_key("post"));
-
-        let post = props.get("post").unwrap().as_object().unwrap();
-        assert!(post.get("title").unwrap().as_str().unwrap().contains("hello-world"));
+        let body = html(respond(&router, &engine, LuatRequest::new("/blog/hello-world", "GET")));
+        assert!(body.contains("Post: hello-world"), "{body}");
     }
 
     #[test]
-    fn test_api_handler_get() {
+    fn api_get() {
         let dir = tempdir().unwrap();
         setup_test_project(dir.path());
+        let (router, engine) = app(dir.path());
 
-        let server_file = dir.path().join("src/routes/api/hello/+server.lua");
-        let lua = Lua::new();
-        let ctx = LoadContext::new("/api/hello".to_string(), Method::GET, vec![]);
-
-        let result = run_api_handler(&lua, &server_file, &ctx, None).unwrap();
-
-        assert_eq!(result.status, 200);
-        let body = result.body.as_object().unwrap();
-        assert_eq!(body.get("message").unwrap(), "Hello from API");
+        let (status, body) = json(respond(&router, &engine, LuatRequest::new("/api/hello", "GET")));
+        assert_eq!(status, 200);
+        assert_eq!(body["message"], "Hello from API");
     }
 
     #[test]
-    fn test_api_handler_post() {
+    fn api_post_reads_form_body() {
         let dir = tempdir().unwrap();
         setup_test_project(dir.path());
+        let (router, engine) = app(dir.path());
 
-        let server_file = dir.path().join("src/routes/api/hello/+server.lua");
-        let lua = Lua::new();
-
-        let mut form = std::collections::HashMap::new();
-        form.insert("name".to_string(), "Claude".to_string());
-
-        let ctx = LoadContext::new("/api/hello".to_string(), Method::POST, vec![])
-            .with_form(form);
-
-        let result = run_api_handler(&lua, &server_file, &ctx, None).unwrap();
-
-        assert_eq!(result.status, 201);
-        let body = result.body.as_object().unwrap();
-        assert_eq!(body.get("greeting").unwrap(), "Hello, Claude");
+        let request = LuatRequest::new("/api/hello", "POST")
+            .with_headers(HashMap::from([(
+                "content-type".to_string(),
+                "application/x-www-form-urlencoded".to_string(),
+            )]))
+            .with_body(b"name=Ada".to_vec());
+        let (status, body) = json(respond(&router, &engine, request));
+        assert_eq!(status, 201);
+        assert_eq!(body["greeting"], "Hello, Ada");
     }
 
     #[test]
-    fn test_api_handler_method_not_allowed() {
+    fn api_unknown_method_is_405() {
         let dir = tempdir().unwrap();
         setup_test_project(dir.path());
+        let (router, engine) = app(dir.path());
 
-        let server_file = dir.path().join("src/routes/api/hello/+server.lua");
-        let lua = Lua::new();
-        let ctx = LoadContext::new("/api/hello".to_string(), Method::DELETE, vec![]);
-
-        let result = run_api_handler(&lua, &server_file, &ctx, None).unwrap();
-
-        assert_eq!(result.status, 405); // Method not allowed
+        let (status, _) = json(respond(&router, &engine, LuatRequest::new("/api/hello", "DELETE")));
+        assert_eq!(status, 405);
     }
 }
 
-#[cfg(test)]
 mod url_matching_tests {
     use super::*;
 
     #[test]
-    fn test_exact_match() {
+    fn exact_matches() {
         let dir = tempdir().unwrap();
         setup_test_project(dir.path());
-
-        let routes_dir = dir.path().join("src/routes");
-        let router = LuatRouter::discover(&routes_dir).unwrap();
-
-        assert!(router.match_url("/").is_some());
-        assert!(router.match_url("/about").is_some());
-        assert!(router.match_url("/blog").is_some());
+        let (router, _) = app(dir.path());
+        for path in ["/", "/about", "/blog"] {
+            assert!(router.match_url(path).is_some(), "{path}");
+        }
     }
 
     #[test]
-    fn test_dynamic_param_extraction() {
+    fn dynamic_params_are_extracted() {
         let dir = tempdir().unwrap();
         setup_test_project(dir.path());
-
-        let routes_dir = dir.path().join("src/routes");
-        let router = LuatRouter::discover(&routes_dir).unwrap();
-
-        let matched = router.match_url("/blog/test-slug").unwrap();
-        assert_eq!(matched.param("slug"), Some("test-slug"));
-
-        let matched = router.match_url("/users/42").unwrap();
-        assert_eq!(matched.param("id"), Some("42"));
+        let (router, _) = app(dir.path());
+        assert_eq!(router.match_url("/blog/test-slug").unwrap().params["slug"], "test-slug");
+        assert_eq!(router.match_url("/users/42").unwrap().params["id"], "42");
     }
 
     #[test]
-    fn test_no_match_returns_none() {
+    fn unknown_paths_do_not_match() {
         let dir = tempdir().unwrap();
         setup_test_project(dir.path());
-
-        let routes_dir = dir.path().join("src/routes");
-        let router = LuatRouter::discover(&routes_dir).unwrap();
-
+        let (router, _) = app(dir.path());
         assert!(router.match_url("/nonexistent").is_none());
         assert!(router.match_url("/blog/slug/extra/path").is_none());
     }
 
     #[test]
-    fn test_trailing_slash_handling() {
+    fn trailing_slash_is_ignored() {
         let dir = tempdir().unwrap();
         setup_test_project(dir.path());
-
-        let routes_dir = dir.path().join("src/routes");
-        let router = LuatRouter::discover(&routes_dir).unwrap();
-
-        // Should match with or without trailing slash
-        assert!(router.match_url("/about").is_some());
+        let (router, _) = app(dir.path());
         assert!(router.match_url("/about/").is_some());
     }
 }

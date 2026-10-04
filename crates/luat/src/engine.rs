@@ -1202,27 +1202,39 @@ impl<R: ResourceResolver> Engine<R> {
         context: &Value,
         request_runtime: Option<&Table>,
     ) -> Result<String> {
-        // println!("DEBUG: Rendering from bundle module: {}", module_name);
+        let (render_func, runtime) = self.prepare_bundled_render(module_name, request_runtime)?;
+        Ok(render_func.call_async((context, &runtime)).await?)
+    }
+
+    /// Synchronous variant of `render_from_bundle_in`.
+    pub(crate) fn render_from_bundle_sync_in(
+        &self,
+        module_name: &str,
+        context: &Value,
+        request_runtime: Option<&Table>,
+    ) -> Result<String> {
+        let (render_func, runtime) = self.prepare_bundled_render(module_name, request_runtime)?;
+        Ok(render_func.call((context, &runtime))?)
+    }
+
+    /// Requires a module preloaded from a bundle and returns its `render`
+    /// function plus the runtime table to call it with.
+    fn prepare_bundled_render(
+        &self,
+        module_name: &str,
+        request_runtime: Option<&Table>,
+    ) -> Result<(mlua::Function, Table)> {
         let require: mlua::Function = self.lua.globals().get("require")?;
-        // println!("DEBUG: Calling require for module: {}", module_name);
         let module: Table = require.call(module_name)?;
-        // println!("DEBUG: Module loaded: {:?}", module);
-        if !module.contains_key("render")? {
-            return Err(LuatError::InvalidTemplate(format!(
-                "Module '{}' has no 'render' function",
-                module_name
-            )));
-        }
-
-        let render_func: mlua::Function = module.get("render")?;
-
+        let render_func: Option<mlua::Function> = module.get("render")?;
+        let render_func = render_func.ok_or_else(|| {
+            LuatError::InvalidTemplate(format!("Module '{}' has no 'render' function", module_name))
+        })?;
         let runtime = match request_runtime {
             Some(existing) => existing.clone(),
             None => self.new_request_runtime()?,
         };
-
-        let result: String = render_func.call_async((context, &runtime)).await?;
-        Ok(result)
+        Ok((render_func, runtime))
     }
 
     /// Loads Lua code directly into the engine's runtime.

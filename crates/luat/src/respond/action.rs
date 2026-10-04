@@ -50,8 +50,7 @@ impl<R: ResourceResolver> Engine<R> {
         let rendered = match action_template(route, &ctx) {
             Some(template) => {
                 let context = self.to_value(&response.data)?;
-                let module = self.compile_entry(&template)?;
-                Some(self.render(&module, &context)?)
+                Some(self.render_template(&template, &context, None)?)
             }
             None => None,
         };

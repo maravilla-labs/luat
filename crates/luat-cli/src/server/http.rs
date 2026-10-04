@@ -7,14 +7,12 @@
 //! This is a thin adapter that converts HTTP requests to `LuatRequest`,
 //! calls `engine.respond()`, and converts `LuatResponse` back to HTTP.
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::{
     body::Body,
     extract::{Request, State, WebSocketUpgrade},
-    http::{Method, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
     Router,
@@ -27,9 +25,8 @@ use tower_http::services::ServeDir;
 use super::livereload::handle_websocket;
 use crate::config::Config;
 use crate::kv::KVManager;
-use crate::router::{Route, Router as LuatRouter};
+use crate::server::request::to_luat_request;
 
-const MAX_BODY_SIZE: usize = 1024 * 1024;
 
 /// Shared application state for the development server.
 pub struct AppState {
@@ -39,8 +36,10 @@ pub struct AppState {
     pub reload_tx: Arc<broadcast::Sender<()>>,
     /// Application configuration.
     pub config: Config,
-    /// URL router for matching requests.
-    pub router: Option<LuatRouter>,
+    /// Whether SvelteKit-style routing is used (otherwise simplified mode).
+    /// Routes are rediscovered on every request, so new route files work
+    /// without a restart.
+    pub routed: bool,
     /// Path to the routes directory.
     pub routes_dir: PathBuf,
     /// The HTML shell pages are rendered into (`src/app.html`).
@@ -58,30 +57,30 @@ pub async fn create_server(
     let working_dir = std::env::current_dir()?;
 
     // Determine which directory to use for templates
-    let (templates_dir, router) = if config.routing.simplified {
+    let (templates_dir, routed) = if config.routing.simplified {
         // Simplified mode: use templates_dir directly
-        (working_dir.join(&config.dev.templates_dir), None)
+        (working_dir.join(&config.dev.templates_dir), false)
     } else {
         // SvelteKit-style routing: use routes_dir
         let routes_dir = working_dir.join(&config.routing.routes_dir);
         if routes_dir.exists() {
-            let router = LuatRouter::discover(&routes_dir)?;
+            let router = luat::Router::discover(&routes_dir)?;
             println!(
                 "Discovered {} route(s) in {}",
                 router.routes().len(),
                 routes_dir.display()
             );
             for route in router.routes() {
-                println!("  {} -> {}", route.pattern, route.fs_path.display());
+                println!("  {} -> {}", route.pattern, route.fs_path);
             }
-            (routes_dir.clone(), Some(router))
+            (routes_dir.clone(), true)
         } else {
             // Fall back to templates_dir if routes_dir doesn't exist
             println!(
                 "Routes directory {} not found, falling back to simplified mode",
                 routes_dir.display()
             );
-            (working_dir.join(&config.dev.templates_dir), None)
+            (working_dir.join(&config.dev.templates_dir), false)
         }
     };
 
@@ -140,7 +139,7 @@ pub async fn create_server(
         engine: RwLock::new(engine),
         reload_tx,
         config: config.clone(),
-        router,
+        routed,
         routes_dir: templates_dir,
         shell: app_html_template.map(luat::AppShell::new).unwrap_or_default(),
         kv_manager,
@@ -169,143 +168,34 @@ async fn livereload_handler(
 }
 
 /// Main fallback handler that routes requests
-async fn fallback_handler(
-    State(state): State<Arc<AppState>>,
-    request: Request<Body>,
-) -> Response {
-    let (parts, body) = request.into_parts();
-    let method = parts.method.clone();
-    let uri = parts.uri.clone();
-    let headers = parts.headers.clone();
-    let path = uri.path().to_string();
-    let query_string = uri.query().unwrap_or_default().to_string();
-
-    // Parse query parameters
-    let query: HashMap<String, String> = query_string
-        .split('&')
-        .filter_map(|pair| {
-            let mut parts = pair.splitn(2, '=');
-            let key = parts.next()?.to_string();
-            let value = parts.next().unwrap_or("").to_string();
-            if key.is_empty() {
-                None
-            } else {
-                Some((key, value))
-            }
-        })
-        .collect();
-
-    // Check if we have a SvelteKit-style router
-    if let Some(ref router) = state.router {
-        // Try to match the URL
-        if let Some(route_match) = router.match_url(&path) {
-            let body_bytes = if method != Method::GET && method != Method::HEAD {
-                match axum::body::to_bytes(body, MAX_BODY_SIZE).await {
-                    Ok(bytes) => {
-                        if bytes.is_empty() {
-                            None
-                        } else {
-                            Some(bytes.to_vec())
-                        }
-                    }
-                    Err(_) => {
-                        return (StatusCode::BAD_REQUEST, "Body too large").into_response();
-                    }
-                }
-            } else {
-                None
-            };
-
-            let headers_map: HashMap<String, String> = headers
-                .iter()
-                .filter_map(|(k, v)| v.to_str().ok().map(|v| (k.to_string(), v.to_string())))
-                .collect();
-
-            // Create LuatRequest
-            let luat_request = to_luat_request(&path, &method, query, body_bytes, headers_map);
-
-            // Handle route using unified engine.respond_async()
-            return handle_route(&state, route_match.route, route_match.params.clone(), luat_request).await;
-        }
+async fn fallback_handler(State(state): State<Arc<AppState>>, request: Request<Body>) -> Response {
+    if !state.routed {
+        return handle_simplified_route(&state, request.uri().path()).await;
     }
-
-    // Fall back to simplified routing
-    handle_simplified_route(&state, &path).await
-}
-
-/// Convert CLI Route to Engine Route for use with engine.respond()
-fn cli_route_to_engine_route(
-    cli_route: &Route,
-    params: &[(String, String)],
-    routes_dir: &PathBuf,
-) -> luat::router::Route {
-    let to_relative_string = |path: &PathBuf| -> String {
-        path.strip_prefix(routes_dir)
-            .unwrap_or(path)
-            .to_string_lossy()
-            .to_string()
+    let request = match to_luat_request(request).await {
+        Ok(request) => request,
+        Err(response) => return response,
+    };
+    let router = match luat::Router::discover(&state.routes_dir) {
+        Ok(router) => router,
+        Err(e) => return crate::server::response::error(500, format!("Route discovery failed: {e}")),
     };
 
-    let mut route = luat::router::Route::new(
-        cli_route.pattern.clone(),
-        to_relative_string(&cli_route.fs_path),
-    );
-
-    // Set params
-    route.params = params.iter().cloned().collect();
-
-    // Convert page paths
-    route.page = cli_route.page.as_ref().map(&to_relative_string);
-    route.layout = cli_route.layout.as_ref().map(&to_relative_string);
-    route.page_server = cli_route.server.as_ref().map(&to_relative_string);
-    route.api = cli_route.api.as_ref().map(&to_relative_string);
-    route.error = cli_route.error.as_ref().map(&to_relative_string);
-
-    // Convert layout chains
-    route.layouts = cli_route.layouts.iter().map(&to_relative_string).collect();
-
-    // Convert action templates
-    route.action_templates = cli_route
-        .action_templates
-        .iter()
-        .map(|(k, v)| (k.clone(), to_relative_string(v)))
-        .collect();
-
-    // Note: layout_servers not directly available in CLI Route, but we can derive from layouts
-    route.layout_servers = cli_route.layouts.iter()
-        .filter_map(|layout_path| {
-            let server_path = layout_path.with_file_name("+layout.server.lua");
-            if server_path.exists() {
-                Some(to_relative_string(&server_path))
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    route
-}
-
-/// Convert axum Request parts to LuatRequest
-fn to_luat_request(
-    path: &str,
-    method: &Method,
-    query: HashMap<String, String>,
-    body: Option<Vec<u8>>,
-    headers: HashMap<String, String>,
-) -> LuatRequest {
-    let mut request = LuatRequest::new(path, method.as_str())
-        .with_query(query)
-        .with_headers(headers);
-
-    if let Some(body) = body {
-        request = request.with_body(body);
+    let engine = state.engine.read().await;
+    let result = match router.match_url(&request.path) {
+        Some(route) => engine.respond_async(&route, &request).await,
+        None => Ok(engine
+            .respond_not_found_async(router.root_error(), &request)
+            .await),
+    };
+    match result {
+        Ok(response) => luat_response_to_axum(response, &state, &request),
+        // Only execution-limit errors reach here; everything else is
+        // already an error response.
+        Err(e) => crate::server::response::error(500, format!("Error: {}", e)),
     }
-
-    request
 }
 
-/// Convert LuatResponse to axum Response
 fn luat_response_to_axum(response: LuatResponse, state: &AppState, request: &LuatRequest) -> Response {
     let options = luat::ShellOptions {
         head: collect_head_assets(&state.config),
@@ -316,27 +206,6 @@ fn luat_response_to_axum(response: LuatResponse, state: &AppState, request: &Lua
         http.body = inject_livereload_script(&String::from_utf8_lossy(&http.body)).into_bytes();
     }
     crate::server::response::to_axum(http)
-}
-
-/// Handle any route (API or page) using engine.respond()
-async fn handle_route(
-    state: &AppState,
-    route: &Route,
-    params: Vec<(String, String)>,
-    request: LuatRequest,
-) -> Response {
-    // Convert CLI route to engine route
-    let engine_route = cli_route_to_engine_route(route, &params, &state.routes_dir);
-
-    // Use engine.respond() for unified handling - it handles both API and page routes
-    let engine = state.engine.read().await;
-
-    match engine.respond_async(&engine_route, &request).await {
-        Ok(response) => luat_response_to_axum(response, state, &request),
-        // Only execution-limit errors reach here; everything else is
-        // already an error response.
-        Err(e) => crate::server::response::error(500, format!("Error: {}", e)),
-    }
 }
 
 /// Handle simplified routing (direct file-to-URL mapping)
@@ -377,15 +246,6 @@ async fn handle_simplified_route(state: &AppState, path: &str) -> Response {
 }
 
 
-/// Creates a redirect response (reserved for future use).
-#[allow(dead_code)]
-fn redirect_response(url: &str) -> Response {
-    Response::builder()
-        .status(StatusCode::FOUND)
-        .header("location", url)
-        .body(Body::empty())
-        .unwrap()
-}
 
 
 /// Collect head assets (CSS and JS files from public directory)

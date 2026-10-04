@@ -40,8 +40,6 @@ pub mod config;
 pub mod extensions;
 /// Key-Value store with SQLite backend.
 pub mod kv;
-/// SvelteKit-style file-based routing.
-pub mod router;
 /// Development server with hot reload.
 pub mod server;
 /// Frontend toolchain management (Vite, Bun, npm).

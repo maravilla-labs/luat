@@ -79,6 +79,8 @@ pub mod request;
 pub mod ctx_helpers;
 
 pub mod app_shell;
+
+pub mod bundle;
 /// HTTP response abstraction for the engine.
 pub mod response;
 /// Shared request body parsing helpers.
@@ -118,6 +120,7 @@ pub use request::LuatRequest;
 pub use response::{Headers, LuatResponse};
 pub use ctx_helpers::{parse_cookie_header, CookieJar, HttpError};
 pub use app_shell::{finalize, AppShell, HttpResponse, ShellOptions};
+pub use bundle::{App, Bundle, BundleHeader, BUNDLE_ABI};
 pub use router::{Route, Router};
 pub use runtime::{ApiResult, LoadResult, Runtime};
 
