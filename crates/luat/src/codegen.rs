@@ -368,6 +368,32 @@ impl LuaCodeGenerator {
         self.write_line("end");
         self.write_line("");
 
+        // Attribute rendering. nil and false omit the attribute; true renders
+        // it bare (`disabled`), except for attributes whose values are
+        // literally "true"/"false" (aria-*, data-*, draggable, spellcheck,
+        // contenteditable), which get `="true"`. Anything else is
+        // stringified, and escaped unless `raw`. Names that are not valid
+        // attribute names (possible with spreads) are skipped.
+        for line in [
+            "local function __luat_attr(name, val, raw)",
+            "  if val == nil or val == false then return '' end",
+            "  if type(name) ~= 'string' or name == '' or string.find(name, '[%s%c\"\\'<>/=]') then return '' end",
+            "  if val == true then",
+            "    local lower = string.lower(name)",
+            "    local prefix = string.sub(lower, 1, 5)",
+            "    if prefix == 'aria-' or prefix == 'data-' or lower == 'draggable' or lower == 'spellcheck' or lower == 'contenteditable' then",
+            "      return ' ' .. name .. '=\"true\"'",
+            "    end",
+            "    return ' ' .. name",
+            "  end",
+            "  if raw then return ' ' .. name .. '=\"' .. tostring(val) .. '\"' end",
+            "  return ' ' .. name .. '=\"' .. html_escape(tostring(val)) .. '\"'",
+            "end",
+            "",
+        ] {
+            self.write_line(line);
+        }
+
         // Smart tostring function (fixed: only tables get JSON-like, others are plain tostring)
         self.write_line("local function smart_tostring(val)");
         self.indent();
@@ -688,18 +714,18 @@ impl LuaCodeGenerator {
                         self.indent();
                         self.write_line("local __classes = {}");
                         self.write_line("for k, v in pairs(__val) do if v then table.insert(__classes, k) end end");
-                        self.write_line("__write(\" class=\\\"\" .. table.concat(__classes, ' ') .. \"\\\"\")");
+                        self.write_line("__write(\" class=\\\"\" .. html_escape(table.concat(__classes, ' ')) .. \"\\\"\")");
                         self.dedent();
                         self.write_line("else");
                         self.indent();
-                        self.write_line("__write(\" class=\\\"\" .. html_escape(tostring(__val)) .. \"\\\"\")");
+                        self.write_line("__write(__luat_attr(\"class\", __val))");
                         self.dedent();
                         self.write_line("end");
                     } else {
                         self.write_line_with_source(
                             &format!(
-                                "__write(\" {}=\\\"\" .. html_escape(tostring({})) .. \"\\\"\")",
-                                name,
+                                "__write(__luat_attr(\"{}\", {}))",
+                                escape_lua_string(name),
                                 expr.content.trim()
                             ),
                             source_line,
@@ -710,8 +736,8 @@ impl LuaCodeGenerator {
                     let source_line = expr.span.line;
                     self.write_line_with_source(
                         &format!(
-                            "__write(\" {}=\\\"\" .. tostring({}) .. \"\\\"\")",
-                            name,
+                            "__write(__luat_attr(\"{}\", {}, true))",
+                            escape_lua_string(name),
                             expr.content.trim()
                         ),
                         source_line,
@@ -729,7 +755,7 @@ impl LuaCodeGenerator {
                     source_line,
                 );
                 self.indent();
-                self.write_line("__write(\" \" .. __k .. \"=\\\"\" .. html_escape(tostring(__v)) .. \"\\\"\")");
+                self.write_line("__write(__luat_attr(__k, __v))");
                 self.dedent();
                 self.write_line("end");
             }
