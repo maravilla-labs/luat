@@ -112,6 +112,18 @@ pub use request::LuatRequest;
 pub use response::LuatResponse;
 pub use router::{Route, Router};
 pub use runtime::{ApiResult, LoadResult, Runtime};
+
+/// `Send + Sync` on native builds (where the engine may move between
+/// threads), no bound on WASM.
+#[cfg(not(target_arch = "wasm32"))]
+pub trait MaybeSendSync: Send + Sync {}
+#[cfg(not(target_arch = "wasm32"))]
+impl<T: Send + Sync> MaybeSendSync for T {}
+/// `Send + Sync` on native builds, no bound on WASM.
+#[cfg(target_arch = "wasm32")]
+pub trait MaybeSendSync {}
+#[cfg(target_arch = "wasm32")]
+impl<T> MaybeSendSync for T {}
 #[cfg(not(target_arch = "wasm32"))]
 pub use limits::{EngineLimits, LimitExceeded};
 pub use extensions::register_json_module;

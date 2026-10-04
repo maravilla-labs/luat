@@ -1784,6 +1784,32 @@ _G.__bundle_debug = {
         result
     }
 
+    /// Registers a host module so guest code can `require(name)` it.
+    ///
+    /// `build` runs on the first `require` and its table is cached like any
+    /// other module, so hosts that create an engine per request only pay for
+    /// the modules a request actually uses. Host modules take precedence over
+    /// files of the same name.
+    ///
+    /// ```rust,ignore
+    /// engine.register_module("greeter", |lua| {
+    ///     let m = lua.create_table()?;
+    ///     m.set("hello", lua.create_function(|_, name: String| Ok(format!("hi {name}")))?)?;
+    ///     Ok(m)
+    /// })?;
+    /// // guest: local greeter = require("greeter")
+    /// ```
+    pub fn register_module<F>(&self, name: &str, build: F) -> Result<()>
+    where
+        F: Fn(&Lua) -> mlua::Result<Table> + crate::MaybeSendSync + 'static,
+    {
+        let loader = self.lua.create_function(move |lua, _: mlua::MultiValue| build(lua))?;
+        let package: Table = self.lua.globals().get("package")?;
+        let preload: Table = package.get("preload")?;
+        preload.set(name, loader)?;
+        Ok(())
+    }
+
     /// Applies execution limits to all guest code this engine runs,
     /// replacing any previous limits. See [`crate::limits`].
     ///
