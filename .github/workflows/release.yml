@@ -7,6 +7,12 @@ on:
   push:
     tags:
       - 'v[0-9]+.*'
+  # Publish the npm package for a release that already exists.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish to npm (e.g. v0.2.0)"
+        required: true
 
 permissions:
   contents: write
@@ -17,6 +23,7 @@ env:
 jobs:
   create-release:
     name: Create Release
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -97,3 +104,46 @@ jobs:
         with:
           draft: false
           token: ${{ secrets.GITHUB_TOKEN }}
+
+  # The npm wrapper (npm/) downloads this release's binaries on install, so it
+  # goes out once the release is public.
+  publish-npm:
+    name: Publish npm package
+    needs: finalize-release
+    if: always() && (needs.finalize-release.result == 'success' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: npm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Version from the tag
+        id: version
+        env:
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          VERSION="${TAG#v}"
+          CURRENT=$(node -p "require('./package.json').version")
+          if [ "$CURRENT" != "$VERSION" ]; then
+            npm version --no-git-tag-version "$VERSION"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if npm view "@maravilla-labs/luat@$VERSION" version >/dev/null 2>&1; then
+            echo "@maravilla-labs/luat@$VERSION is already published"
+            exit 0
+          fi
+          npm publish --access public

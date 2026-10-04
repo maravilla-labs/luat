@@ -35,6 +35,15 @@ function getPlatform() {
   return target;
 }
 
+// The binaries of this package's own version (published together by the
+// release workflow), so an install is reproducible. LUAT_VERSION overrides
+// it ("latest" for the newest GitHub release).
+async function getVersion() {
+  const wanted = process.env.LUAT_VERSION || `v${require('./package.json').version}`;
+  if (wanted === 'latest') return getLatestVersion();
+  return wanted.startsWith('v') ? wanted : `v${wanted}`;
+}
+
 async function getLatestVersion() {
   return new Promise((resolve, reject) => {
     const options = {
@@ -114,7 +123,7 @@ async function install() {
   console.log('Installing luat...');
 
   const platform = getPlatform();
-  const version = await getLatestVersion();
+  const version = await getVersion();
   const isWindows = process.platform === 'win32';
   const ext = isWindows ? 'zip' : 'tar.gz';
   const archiveName = `luat-${version}-${platform}.${ext}`;
