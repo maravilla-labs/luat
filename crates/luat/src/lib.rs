@@ -95,6 +95,11 @@ mod scoped_require;
 /// Where `require("@scope/name/...")` finds installed packages.
 pub mod package_paths;
 
+/// Luat packages: manifests, tarballs, the registry client, dependency
+/// resolution and installation.
+#[cfg(feature = "packages")]
+pub mod packages;
+
 mod patterns;
 
 #[cfg(not(target_arch = "wasm32"))]

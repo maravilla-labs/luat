@@ -29,6 +29,19 @@ wasm = []
 send = ["mlua/send"]
 async-lua = ["mlua/async"]
 filesystem = []
+# Package manager client: manifests, tarballs, registry client, resolver,
+# installer. Needs networking, so it is not part of the default features.
+packages = [
+    "filesystem",
+    "dep:reqwest",
+    "dep:semver",
+    "dep:tar",
+    "dep:flate2",
+    "dep:toml",
+    "dep:toml_edit",
+    "dep:globset",
+    "dep:walkdir",
+]
 
 [dependencies]
 # mlua with base features - async and send are feature-gated
@@ -51,6 +64,16 @@ tracing-subscriber = { workspace = true }
 matchit = { workspace = true }
 form_urlencoded = "1.2"
 memchr = "2"
+
+# Packages (feature "packages")
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+semver = { version = "1", features = ["serde"], optional = true }
+tar = { workspace = true, optional = true }
+flate2 = { workspace = true, optional = true }
+toml = { workspace = true, optional = true }
+toml_edit = { version = "0.22", optional = true }
+globset = { workspace = true, optional = true }
+walkdir = { version = "2", optional = true }
 
 [dev-dependencies]
 tempfile = "3.5"

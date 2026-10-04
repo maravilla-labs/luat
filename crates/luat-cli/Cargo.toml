@@ -22,7 +22,7 @@ path = "src/main.rs"
 
 [dependencies]
 include_dir = "0.7"
-luat = { workspace = true }
+luat = { workspace = true, features = ["packages"] }
 mlua = { workspace = true }
 clap = { workspace = true }
 axum = { workspace = true }
@@ -66,3 +66,6 @@ matchit.workspace = true
 tempfile = "3.10"
 tokio-test = "0.4"
 axum-test = "16"
+semver = "1"
+flate2 = { workspace = true }
+tar = { workspace = true }
