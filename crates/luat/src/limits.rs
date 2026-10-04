@@ -25,9 +25,20 @@
 //! The deadline is checked while Lua code executes. Time spent awaiting host
 //! futures is not interrupted here; hosts should also put a timeout around
 //! the future they poll.
+//!
+//! # Known gap: long native calls
+//!
+//! The hook runs between Lua instructions, so a single call into a C
+//! library function is not interrupted while it runs. Most standard library
+//! functions are linear in data that the memory limit already bounds. The
+//! exception is pattern matching (`string.find`, `match`, `gmatch`,
+//! `gsub`), whose backtracking is super-linear for failing patterns such as
+//! `.-x` over a large subject. Until those functions count their own steps,
+//! hosts serving untrusted code should run engines on threads they can
+//! abandon, and treat a missed deadline as a reason to discard the thread.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicI64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Instant;
 
@@ -93,7 +104,9 @@ const TRIPPED_DEADLINE: u8 = 2;
 /// Mutable limit state for one Lua state, shared with the hook.
 #[derive(Debug)]
 struct LimitState {
-    /// Remaining instructions; `i64::MAX` when unlimited.
+    /// Whether `remaining` is enforced.
+    count_instructions: AtomicBool,
+    /// Remaining instructions while `count_instructions` is set.
     remaining: AtomicI64,
     deadline: RwLock<Option<Instant>>,
     tripped: AtomicU8,
@@ -102,7 +115,8 @@ struct LimitState {
 impl LimitState {
     fn unlimited() -> Self {
         Self {
-            remaining: AtomicI64::new(i64::MAX),
+            count_instructions: AtomicBool::new(false),
+            remaining: AtomicI64::new(0),
             deadline: RwLock::new(None),
             tripped: AtomicU8::new(NOT_TRIPPED),
         }
@@ -180,11 +194,15 @@ pub(crate) fn apply(lua: &Lua, limits: &EngineLimits) -> Result<()> {
     }
     // mlua treats 0 as "no limit".
     lua.set_memory_limit(limits.memory_bytes.unwrap_or(0))?;
-    let budget = limits
-        .instruction_budget
-        .map(|b| i64::try_from(b).unwrap_or(i64::MAX))
-        .unwrap_or(i64::MAX);
-    state.remaining.store(budget, Ordering::Release);
+    match limits.instruction_budget {
+        Some(budget) => {
+            state
+                .remaining
+                .store(i64::try_from(budget).unwrap_or(i64::MAX), Ordering::Release);
+            state.count_instructions.store(true, Ordering::Release);
+        }
+        None => state.count_instructions.store(false, Ordering::Release),
+    }
     *state.deadline.write().expect("limit state poisoned") = limits.deadline;
     Ok(())
 }
@@ -200,27 +218,34 @@ pub(crate) fn tripped(lua: &Lua) -> Option<LimitExceeded> {
 
 /// Decides whether the current thread must stop. Kept separate from the
 /// hook so that no value with a destructor is alive when the hook raises.
+///
+/// Fails closed: if the limit state cannot be read (poisoned lock), the
+/// code is stopped rather than allowed to run unlimited.
 fn check(state: *mut ffi::lua_State) -> Option<&'static [u8]> {
     // SAFETY: called from the hook with a valid state.
     let key = unsafe { state_key(state) };
-    let limits = registry().read().ok()?.get(&key)?.clone();
+    let limits = match registry().read() {
+        Ok(map) => map.get(&key).cloned()?,
+        Err(_) => return Some(INSTRUCTIONS_CMSG),
+    };
 
     let tripped = limits.tripped.load(Ordering::Acquire);
     if tripped != NOT_TRIPPED {
         return Some(message_for(tripped));
     }
 
-    let left = limits.remaining.fetch_sub(CHECK_EVERY as i64, Ordering::AcqRel);
-    if left != i64::MAX && left - CHECK_EVERY as i64 <= 0 {
-        limits.tripped.store(TRIPPED_INSTRUCTIONS, Ordering::Release);
-        return Some(INSTRUCTIONS_CMSG);
-    }
-    if left == i64::MAX {
-        // Unlimited: undo the decrement so the sentinel stays intact.
-        limits.remaining.store(i64::MAX, Ordering::Release);
+    if limits.count_instructions.load(Ordering::Acquire) {
+        let before = limits.remaining.fetch_sub(CHECK_EVERY as i64, Ordering::AcqRel);
+        if before <= CHECK_EVERY as i64 {
+            limits.tripped.store(TRIPPED_INSTRUCTIONS, Ordering::Release);
+            return Some(INSTRUCTIONS_CMSG);
+        }
     }
 
-    let deadline = *limits.deadline.read().ok()?;
+    let deadline = match limits.deadline.read() {
+        Ok(deadline) => *deadline,
+        Err(_) => return Some(DEADLINE_CMSG),
+    };
     if deadline.is_some_and(|d| Instant::now() >= d) {
         limits.tripped.store(TRIPPED_DEADLINE, Ordering::Release);
         return Some(DEADLINE_CMSG);

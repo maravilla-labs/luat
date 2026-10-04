@@ -156,3 +156,12 @@ async fn async_load_is_limited() {
         .unwrap_err();
     assert_eq!(LimitExceeded::from_error(&err), Some(LimitExceeded::Instructions));
 }
+
+#[test]
+fn budget_applied_after_unlimited_work_is_enforced() {
+    let engine = engine();
+    run(&engine, "local n = 0 for i = 1, 500000 do n = n + i end").unwrap();
+    engine.set_limits(&budget(100_000)).unwrap();
+    let err = run(&engine, "while true do end").unwrap_err();
+    assert_eq!(LimitExceeded::from_error(&err), Some(LimitExceeded::Instructions));
+}
