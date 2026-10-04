@@ -43,7 +43,7 @@ pub fn order_sources(sources: Vec<(String, String)>) -> Result<Vec<(String, Stri
     for (name, src) in &sources_map {
         let mut module_deps = Vec::new();
         
-        for cap in require_re.captures_iter(src) {
+        for cap in require_re.captures_iter(&crate::lua_comments::blank_comments(src)) {
             let dep_path = cap[1].to_string();
             let normalized_dep = normalize_module_name(&dep_path);
             

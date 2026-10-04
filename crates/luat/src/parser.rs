@@ -60,7 +60,8 @@ pub struct LuatParser;
 fn extract_lua_dependencies(script_content: &str) -> Vec<String> {
     let mut dependencies = Vec::new();
     let require_regex = Regex::new(r#"require\s*\(\s*[\"']([^\"']+)[\"']\s*\)"#).unwrap();
-    for cap in require_regex.captures_iter(script_content) {
+    let code = crate::lua_comments::blank_comments(script_content);
+    for cap in require_regex.captures_iter(&code) {
         if let Some(path) = cap.get(1) {
             // Keep the original path from the require statement
             let orig_path = path.as_str().to_string();
@@ -1364,6 +1365,12 @@ mod tests {
             r#"local name = "world""#
         );
         assert_eq!(ast.body.len(), 2);
+    }
+
+    #[test]
+    fn commented_requires_are_not_dependencies() {
+        let code = "-- local a = require(\"A\")\n--[[\nlocal b = require('B')\n]]\nlocal c = require('C') -- require('D')";
+        assert_eq!(extract_lua_dependencies(code), vec!["C"]);
     }
 
     #[test]

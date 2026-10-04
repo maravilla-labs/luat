@@ -94,6 +94,7 @@ mod scoped_require;
 
 /// Where `require("@scope/name/...")` finds installed packages.
 pub mod package_paths;
+pub(crate) mod lua_comments;
 
 /// Luat packages: manifests, tarballs, the registry client, dependency
 /// resolution and installation.

@@ -13,6 +13,7 @@ use regex::Regex;
 use super::{emit, walk, Bundle, BundleHeader};
 use crate::engine::Engine;
 use crate::error::{LuatError, Result};
+use crate::lua_comments::blank_comments;
 use crate::parser::parse_template;
 use crate::resolver::{FileSystemResolver, ResourceResolver};
 use crate::router::Router;
@@ -257,12 +258,14 @@ fn bundle_key_exists(name: &str, key_by_path: &HashMap<&Path, &str>) -> bool {
     key_by_path.values().any(|key| candidates.iter().any(|c| c == key))
 }
 
-/// Returns the Lua code of `file` (script blocks for templates) and the
-/// names it requires.
+/// Returns the Lua code of `file` (script blocks for templates) with its
+/// comments blanked, and the names it requires. Requires inside comments
+/// are not dependencies.
 fn requires_of(file: &SourceFile, literal: &Regex) -> std::result::Result<(String, Vec<String>), String> {
     if !file.is_template() {
-        let names = literal.captures_iter(&file.content).map(|c| c[1].to_string()).collect();
-        return Ok((file.content.clone(), names));
+        let code = blank_comments(&file.content);
+        let names = literal.captures_iter(&code).map(|c| c[1].to_string()).collect();
+        return Ok((code, names));
     }
     let ast = parse_template(&file.content).map_err(|e| e.to_string())?;
     let code = [ast.module_script.as_ref(), ast.regular_script.as_ref()]
@@ -271,5 +274,5 @@ fn requires_of(file: &SourceFile, literal: &Regex) -> std::result::Result<(Strin
         .map(|s| s.content.as_str())
         .collect::<Vec<_>>()
         .join("\n");
-    Ok((code, ast.imports))
+    Ok((blank_comments(&code), ast.imports))
 }
