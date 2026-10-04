@@ -11,6 +11,8 @@
 //! - `init`: Initialize a new LUAT project
 //! - `serve`: Serve a production build
 //! - `watch`: Watch files and rebuild on changes
+//! - `add`, `remove`, `install`, `update`, `search`, `pack`, `publish`,
+//!   `login`, `yank`: Luat packages (see `docs/packages.md`)
 
 /// Production build command.
 pub mod build;
@@ -18,6 +20,9 @@ pub mod build;
 pub mod dev;
 /// Project initialization command.
 pub mod init;
+/// Package commands (add, remove, install, update, search, pack, publish,
+/// login, yank).
+pub mod packages;
 /// Production server command.
 pub mod serve;
 /// File watch command.

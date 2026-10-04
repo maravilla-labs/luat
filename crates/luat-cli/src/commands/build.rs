@@ -43,6 +43,7 @@ pub async fn run(source: bool, output: &str) -> anyhow::Result<()> {
     } else {
         config.routing.routes_dir.clone()
     };
+    let packages_dir = crate::commands::packages::ensure_installed(&working_dir).await?;
     println!("{} {}", style("Building templates from:").cyan(), source_dir);
 
     let options = BuildOptions {
@@ -52,7 +53,7 @@ pub async fn run(source: bool, output: &str) -> anyhow::Result<()> {
         module_dirs: Vec::new(),
         // The CLI registers these before serving (see server/http.rs, serve.rs).
         host_modules: vec!["http".to_string(), "kv".to_string()],
-        packages_dir: None,
+        packages_dir: Some(packages_dir),
     };
 
     let pb = ProgressBar::new(0);

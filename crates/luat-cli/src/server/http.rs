@@ -86,7 +86,9 @@ pub async fn create_server(
 
     // Create resolver with lib_dir for $lib alias support
     let lib_dir = working_dir.join(&config.routing.lib_dir);
-    let resolver = FileSystemResolver::new(&templates_dir).with_lib_dir(&lib_dir);
+    let resolver = FileSystemResolver::new(&templates_dir)
+        .with_lib_dir(&lib_dir)
+        .with_packages_dir(working_dir.join(luat::packages::PACKAGES_DIR));
     // Dev mode: no caching for fresh reloads on file changes
     let cache = NoOpCache::new();
     let mut engine = Engine::new(resolver, Box::new(cache))?;

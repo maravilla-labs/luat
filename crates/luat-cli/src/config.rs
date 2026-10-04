@@ -39,7 +39,9 @@ use std::path::Path;
 /// Main configuration structure loaded from `luat.toml`.
 #[derive(Debug, Deserialize)]
 pub struct Config {
-    /// Project metadata (name, version).
+    /// Project metadata (name, version). Optional, so that a package's
+    /// `luat.toml` (with `[package]` instead) loads too.
+    #[serde(default)]
     pub project: ProjectConfig,
     /// Development server settings.
     #[serde(default)]
@@ -122,6 +124,7 @@ impl Default for RoutingConfig {
 #[derive(Debug, Deserialize)]
 pub struct ProjectConfig {
     /// Project name.
+    #[serde(default = "default_name")]
     pub name: String,
     /// Project version (default: "0.1.0").
     #[serde(default = "default_version")]
@@ -154,6 +157,19 @@ pub struct BuildConfig {
     /// Bundle format: "lua" or "binary" (default: "lua").
     #[serde(default = "default_bundle_format")]
     pub bundle_format: String,
+}
+
+fn default_name() -> String {
+    "unnamed".to_string()
+}
+
+impl Default for ProjectConfig {
+    fn default() -> Self {
+        Self {
+            name: default_name(),
+            version: default_version(),
+        }
+    }
 }
 
 fn default_version() -> String {

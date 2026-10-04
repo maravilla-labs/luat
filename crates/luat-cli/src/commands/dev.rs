@@ -20,6 +20,7 @@ use crate::watcher::FileWatcher;
 pub async fn run(host: &str, port: u16, verbose: bool, quiet: bool) -> anyhow::Result<()> {
     let config = Config::load()?;
     let working_dir = std::env::current_dir()?;
+    crate::commands::packages::ensure_installed(&working_dir).await?;
 
     // Prepare frontend build tools if any are enabled
     let enabled_tools = config.frontend.get_enabled_tools();
@@ -148,6 +149,8 @@ pub async fn run(host: &str, port: u16, verbose: bool, quiet: bool) -> anyhow::R
     })?;
 
     watcher.start()?;
+    // Keep path dependencies' copies in .luat/packages current.
+    let _package_watchers = watch_path_packages(&working_dir, reload_tx.clone(), quiet)?;
 
     // Start HTTP server
     let addr = format!("{}:{}", host, port);
@@ -168,4 +171,34 @@ pub async fn run(host: &str, port: u16, verbose: bool, quiet: bool) -> anyhow::R
     create_server(&addr, &config, reload_tx).await?;
 
     Ok(())
+}
+
+/// Watches every path dependency's directory and re-installs (re-copies)
+/// path packages when one of their `.lua`/`.luat` files changes.
+fn watch_path_packages(
+    working_dir: &std::path::Path,
+    reload_tx: Arc<broadcast::Sender<()>>,
+    quiet: bool,
+) -> anyhow::Result<Vec<FileWatcher>> {
+    let handle = tokio::runtime::Handle::current();
+    let mut watchers = Vec::new();
+    for dir in crate::commands::packages::path_dependency_dirs(working_dir) {
+        let root = working_dir.to_path_buf();
+        let tx = reload_tx.clone();
+        let handle = handle.clone();
+        let watcher = FileWatcher::new(dir.to_string_lossy().into_owned(), dir.clone(), move |paths| {
+            let project = luat::packages::Project::new(&root);
+            match handle.block_on(project.install(false)) {
+                Ok(_) => {
+                    if !quiet {
+                        println!("  {} re-installed path packages ({} changed)", style("✓").green(), paths.len());
+                    }
+                    let _ = tx.send(());
+                }
+                Err(e) => eprintln!("  {} {}", style("✗").red(), style(format!("package install failed: {e}")).red()),
+            }
+        })?;
+        watchers.push(watcher);
+    }
+    Ok(watchers)
 }

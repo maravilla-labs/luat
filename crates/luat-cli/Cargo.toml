@@ -40,6 +40,7 @@ tracing-subscriber = { workspace = true }
 thiserror = { workspace = true }
 regex = { workspace = true }
 anyhow = "1.0"
+semver = "1"
 
 # Frontend toolchain
 reqwest = { workspace = true }
@@ -66,6 +67,5 @@ matchit.workspace = true
 tempfile = "3.10"
 tokio-test = "0.4"
 axum-test = "16"
-semver = "1"
 flate2 = { workspace = true }
 tar = { workspace = true }

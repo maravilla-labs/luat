@@ -67,6 +67,62 @@ enum Commands {
     },
     /// Watch files and rebuild on change (no server)
     Watch,
+    /// Add a package dependency: @scope/name[@<requirement>]
+    Add {
+        /// Package, e.g. @acme/ui or @acme/ui@^1.2
+        package: String,
+        /// Use a local directory instead of a registry (path dependency)
+        #[arg(long)]
+        path: Option<String>,
+    },
+    /// Remove a package dependency
+    Remove {
+        /// Package name, e.g. @acme/ui
+        package: String,
+    },
+    /// Install the packages pinned in luat.lock (resolving first when needed)
+    Install {
+        /// Fail instead of resolving when luat.lock is missing or out of date
+        #[arg(long)]
+        frozen: bool,
+    },
+    /// Update dependencies to the newest matching versions
+    Update {
+        /// Only update this package
+        package: Option<String>,
+    },
+    /// Search a registry for packages
+    Search {
+        /// Search text
+        query: String,
+        /// Registry URL (default: the project's default registry)
+        #[arg(long)]
+        registry: Option<String>,
+    },
+    /// Write the package tarball without publishing it
+    Pack,
+    /// Publish the package in the current directory
+    Publish {
+        /// Pack and check, but do not upload
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Store a registry token in the user's config directory
+    Login {
+        /// Registry URL (default: the project's default registry)
+        registry: Option<String>,
+        /// The token (read from stdin when omitted)
+        #[arg(long)]
+        token: Option<String>,
+    },
+    /// Yank a published version: @scope/name@<version>
+    Yank {
+        /// Package and version, e.g. @acme/ui@1.2.0
+        package: String,
+        /// Unyank instead
+        #[arg(long)]
+        undo: bool,
+    },
 }
 
 #[tokio::main]
@@ -97,5 +153,18 @@ async fn main() -> anyhow::Result<()> {
         Commands::Watch => {
             commands::watch::run().await
         }
+        Commands::Add { package, path } => commands::packages::add(&package, path.as_deref()).await,
+        Commands::Remove { package } => commands::packages::remove(&package).await,
+        Commands::Install { frozen } => commands::packages::install(frozen).await,
+        Commands::Update { package } => commands::packages::update(package.as_deref()).await,
+        Commands::Search { query, registry } => {
+            commands::packages::registry::search(&query, registry.as_deref()).await
+        }
+        Commands::Pack => commands::packages::registry::pack(),
+        Commands::Publish { dry_run } => commands::packages::registry::publish(dry_run).await,
+        Commands::Login { registry, token } => {
+            commands::packages::registry::login(registry.as_deref(), token).await
+        }
+        Commands::Yank { package, undo } => commands::packages::registry::yank(&package, undo).await,
     }
 }
