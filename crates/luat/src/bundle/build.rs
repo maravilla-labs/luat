@@ -10,12 +10,12 @@ use std::path::{Path, PathBuf};
 
 use regex::Regex;
 
-use super::{emit, Bundle, BundleHeader};
+use super::{emit, walk, Bundle, BundleHeader};
 use crate::engine::Engine;
 use crate::error::{LuatError, Result};
 use crate::parser::parse_template;
 use crate::resolver::{FileSystemResolver, ResourceResolver};
-use crate::router::{route_files, Router};
+use crate::router::Router;
 use crate::sourcemap::BundleSourceMap;
 
 /// An extra directory of modules to include, reachable as
@@ -99,20 +99,26 @@ pub fn build(options: &BuildOptions, progress: impl FnMut(usize, usize)) -> Resu
     }
     let engine = Engine::with_memory_cache(resolver, 100)?;
 
-    let mut files = collect(&options.routes_dir, "")?;
+    let mut warnings = Vec::new();
+    let mut files = collect(&options.routes_dir, "", &mut warnings)?;
     if let Some(lib_dir) = options.lib_dir.as_deref().filter(|d| d.exists()) {
-        files.extend(collect(lib_dir, "lib")?);
+        files.extend(collect(lib_dir, "lib", &mut warnings)?);
     }
     for module_dir in &options.module_dirs {
-        files.extend(collect(&module_dir.dir, &module_dir.prefix)?);
+        if !walk::is_plain_prefix(&module_dir.prefix) {
+            return Err(LuatError::InvalidTemplate(format!(
+                "module directory prefix '{}' must be plain path segments",
+                module_dir.prefix
+            )));
+        }
+        files.extend(collect(&module_dir.dir, &module_dir.prefix, &mut warnings)?);
     }
     if let Some(packages_dir) = &options.packages_dir {
-        for (package, root) in installed_packages(packages_dir)? {
-            files.extend(collect(&root.join("src"), &package)?);
+        for (package, src) in walk::installed_packages(packages_dir, &mut warnings)? {
+            files.extend(collect(&src, &package, &mut warnings)?);
         }
     }
 
-    let mut warnings = Vec::new();
     let require_map = require_map(&files, engine.resolver(), &options.host_modules, &mut warnings);
 
     let (templates, server_sources): (Vec<_>, Vec<_>) = files.into_iter().partition(SourceFile::is_template);
@@ -120,7 +126,10 @@ pub fn build(options: &BuildOptions, progress: impl FnMut(usize, usize)) -> Resu
     let server_sources: Vec<(String, String)> =
         server_sources.into_iter().map(|f| (f.key, f.content)).collect();
 
-    let routes = route_files(&options.routes_dir)?;
+    let routes: Vec<String> = walk::walk(&options.routes_dir, &mut Vec::new())?
+        .into_iter()
+        .map(|f| f.rel)
+        .collect();
     let route_count = Router::from_paths(routes.iter()).routes().len();
 
     let app_html = match &options.app_html {
@@ -166,48 +175,19 @@ pub fn build(options: &BuildOptions, progress: impl FnMut(usize, usize)) -> Resu
 }
 
 /// Collects `.luat` and `.lua` files under `dir`, keyed by `prefix/relative`.
-fn collect(dir: &Path, prefix: &str) -> Result<Vec<SourceFile>> {
-    if !dir.exists() {
-        return Ok(Vec::new());
-    }
-    route_files(dir)?
+/// Symlinks and anything resolving outside `dir` are skipped with a warning.
+fn collect(dir: &Path, prefix: &str, warnings: &mut Vec<String>) -> Result<Vec<SourceFile>> {
+    walk::walk(dir, warnings)?
         .into_iter()
-        .filter(|rel| rel.ends_with(".luat") || rel.ends_with(".lua"))
-        .map(|rel| {
-            let path = dir.join(&rel);
+        .filter(|f| f.rel.ends_with(".luat") || f.rel.ends_with(".lua"))
+        .map(|f| {
             Ok(SourceFile {
-                key: if prefix.is_empty() { rel } else { format!("{prefix}/{rel}") },
-                abs: fs::canonicalize(&path)?,
-                content: fs::read_to_string(&path)?,
+                content: walk::read_contained(dir, &f)?,
+                key: if prefix.is_empty() { f.rel } else { format!("{prefix}/{}", f.rel) },
+                abs: f.abs,
             })
         })
         .collect()
-}
-
-/// Installed packages under `packages_dir`: `(@scope/name, package root)`,
-/// sorted. Entries that are not valid package names are skipped.
-fn installed_packages(packages_dir: &Path) -> Result<Vec<(String, PathBuf)>> {
-    let mut packages = Vec::new();
-    if !packages_dir.is_dir() {
-        return Ok(packages);
-    }
-    for scope in fs::read_dir(packages_dir)? {
-        let scope = scope?;
-        let scope_name = scope.file_name().to_string_lossy().into_owned();
-        let Some(scope_part) = scope_name.strip_prefix('@') else { continue };
-        if !crate::package_paths::is_valid_name_part(scope_part) || !scope.file_type()?.is_dir() {
-            continue;
-        }
-        for package in fs::read_dir(scope.path())? {
-            let package = package?;
-            let name = package.file_name().to_string_lossy().into_owned();
-            if crate::package_paths::is_valid_name_part(&name) && package.file_type()?.is_dir() {
-                packages.push((format!("{scope_name}/{name}"), package.path()));
-            }
-        }
-    }
-    packages.sort();
-    Ok(packages)
 }
 
 /// Resolves every literal `require("...")` at build time, so bundles do not

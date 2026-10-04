@@ -97,9 +97,18 @@ pub fn resolve_package_module(
             "package '{package}' is not installed (required as '{require_name}'); run `luat install`"
         )));
     }
-    let Ok(canonical_root) = std::fs::canonicalize(&package_root) else {
-        return Ok(None);
-    };
+    // The package root must be a real directory inside `packages_dir`, not
+    // a symlink to somewhere else.
+    let scope_dir = package_root.parent().unwrap_or(packages_dir);
+    let is_real_dir = |p: &std::path::Path| std::fs::symlink_metadata(p).map(|m| m.is_dir()).unwrap_or(false);
+    let canonical_root = std::fs::canonicalize(&package_root).map_err(LuatError::IoError)?;
+    let canonical_packages = std::fs::canonicalize(packages_dir).map_err(LuatError::IoError)?;
+    if !is_real_dir(scope_dir) || !is_real_dir(&package_root) || !canonical_root.starts_with(&canonical_packages) {
+        return Err(LuatError::ResolutionError(format!(
+            "Security: package '{package}' is not a directory inside {}",
+            packages_dir.display()
+        )));
+    }
     for candidate in package_module_candidates(subpath) {
         let path = package_root.join(&candidate);
         if !path.is_file() {

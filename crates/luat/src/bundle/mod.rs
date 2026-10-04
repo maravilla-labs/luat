@@ -21,6 +21,8 @@
 #[cfg(all(not(target_arch = "wasm32"), feature = "filesystem"))]
 mod build;
 mod emit;
+#[cfg(all(not(target_arch = "wasm32"), feature = "filesystem"))]
+mod walk;
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "filesystem"))]
 pub use build::{build, BuildOptions, BuildOutput, ModuleDir};
