@@ -59,6 +59,10 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 
+/// Registry key holding the unsandboxed `load`, which bundles need to run
+/// server sources. Guest code cannot read the registry.
+const INTERNAL_LOAD_KEY: &str = "__luat_internal_load";
+
 /// Helper function to convert absolute path to relative path.
 /// Used in closures where self is not available.
 fn to_relative_path(absolute_path: &str, root_path: &Option<String>) -> String {
@@ -172,11 +176,48 @@ impl<R: ResourceResolver> Engine<R> {
     /// - `debug` library (introspection)
     /// - `load`, `loadstring`, `loadfile`, `dofile` (dynamic code execution)
     /// - Most of `os` library (keeps only `os.date`, `os.time`, `os.clock`, `os.difftime`)
+    /// - Filesystem and C-module lookup in `require` (`package.path`, `package.cpath`,
+    ///   `package.loadlib`, `package.searchpath` and the default file searchers)
+    ///
+    /// It also locks the string metatable, which every string in the state
+    /// shares, and limits `collectgarbage` to `"count"` so guest code cannot
+    /// stop the collector.
+    ///
+    /// The original `load` is kept only in the Lua registry (see
+    /// [`INTERNAL_LOAD_KEY`]), where guest code cannot reach it. Bundles
+    /// receive it as a chunk argument when the engine preloads them.
     fn sandbox_lua(lua: &Lua, globals: &Table) -> Result<()> {
-        // Save load function for internal use before sandboxing
-        // This allows the bundle's module loader to work while preventing user code access
         let load_fn: mlua::Function = globals.get("load")?;
-        globals.set("__luat_internal_load", load_fn)?;
+        lua.set_named_registry_value(INTERNAL_LOAD_KEY, load_fn)?;
+
+        // Every string shares one metatable; without this, guest code could
+        // replace string methods for all other code in the state.
+        lua.load("getmetatable('').__metatable = false")
+            .set_name("=luat_sandbox")
+            .exec()?;
+
+        let collect: mlua::Function = globals.get("collectgarbage")?;
+        let safe_collect = lua.create_function(move |_, opt: Option<String>| {
+            match opt.as_deref() {
+                Some("count") => collect.call::<mlua::Value>("count"),
+                _ => Err(mlua::Error::runtime(
+                    "collectgarbage: only \"count\" is available",
+                )),
+            }
+        })?;
+        globals.set("collectgarbage", safe_collect)?;
+
+        // `require` may only resolve preloaded modules and the engine's own
+        // searchers (added after this), never files or C libraries.
+        let package: Table = globals.get("package")?;
+        package.set("path", "")?;
+        package.set("cpath", "")?;
+        package.set("loadlib", mlua::Value::Nil)?;
+        package.set("searchpath", mlua::Value::Nil)?;
+        let searchers: Table = package.get("searchers")?;
+        let preload_searcher: mlua::Function = searchers.raw_get(1)?;
+        let only_preload = lua.create_sequence_from([preload_searcher])?;
+        package.set("searchers", only_preload)?;
 
         // Save safe os functions before removing the library
         let os_table: Table = globals.get("os")?;
@@ -203,7 +244,14 @@ impl<R: ResourceResolver> Engine<R> {
         safe_os.set("difftime", os_difftime)?;
 
         // Replace os with restricted version
-        globals.set("os", safe_os)?;
+        globals.set("os", safe_os.clone())?;
+
+        // `package.loaded` still holds the original libraries, so without
+        // this `require("os")` would hand back os.execute and friends.
+        let loaded: Table = package.get("loaded")?;
+        loaded.set("io", mlua::Value::Nil)?;
+        loaded.set("debug", mlua::Value::Nil)?;
+        loaded.set("os", safe_os)?;
 
         Ok(())
     }
@@ -1130,16 +1178,23 @@ impl<R: ResourceResolver> Engine<R> {
     /// The code is executed immediately, making any defined modules
     /// or functions available for subsequent `require()` calls.
     pub fn preload_bundle_code(&self, lua_code: &str) -> Result<()> {
-        self.lua.load(lua_code).set_name("@luat_bundle").exec()?;
-        Ok(())
+        let chunk = self.lua.load(lua_code).set_name("@luat_bundle").into_function()?;
+        self.run_bundle_chunk(chunk)
     }
 
     /// Loads pre-compiled Lua bytecode into the engine's runtime.
     ///
     /// Use with bytecode produced by [`compile_bundle`](Self::compile_bundle).
     pub fn preload_bundle_code_from_binary(&self, bytecode: &[u8]) -> Result<()> {
-        let func = self.lua.load(bytecode).into_function()?;
-        let _: () = func.call(())?;
+        let chunk = self.lua.load(bytecode).into_function()?;
+        self.run_bundle_chunk(chunk)
+    }
+
+    /// Runs a bundle's top-level chunk, handing it the internal `load`
+    /// function as its only argument (bundles read it with `local __load = ...`).
+    fn run_bundle_chunk(&self, chunk: mlua::Function) -> Result<()> {
+        let load_fn: mlua::Function = self.lua.named_registry_value(INTERNAL_LOAD_KEY)?;
+        chunk.call::<mlua::MultiValue>(load_fn)?;
         Ok(())
     }
 
@@ -1224,14 +1279,10 @@ impl<R: ResourceResolver> Engine<R> {
         // Add enhanced error handler
         bundle.push_str(r#"
 -- Enhanced error handler
-local function __wrap_error(module_name, error_msg, traceback)
-    local enhanced_msg = string.format(
-        "Error in module '%s': %s\nTraceback:\n%s",
-        module_name,
-        error_msg,
-        traceback or debug.traceback()
-    )
-    error(enhanced_msg, 0)
+local __load = ...
+
+local function __wrap_error(module_name, error_msg)
+    error(string.format("Error in module '%s': %s", module_name, tostring(error_msg)), 0)
 end
 
 -- Wrap require to add module context
@@ -1239,7 +1290,7 @@ local __original_require = require
 local function __enhanced_require(module_name)
     local ok, result = pcall(__original_require, module_name)
     if not ok then
-        __wrap_error(module_name, result, debug.traceback())
+        __wrap_error(module_name, result)
     end
     return result
 end
@@ -1382,7 +1433,7 @@ _G.require = __enhanced_require
         bundle.push_str("  if not source then return nil end\n");
         bundle.push_str("  local prev = _G.__luat_current_module\n");
         bundle.push_str("  _G.__luat_current_module = key\n");
-        bundle.push_str("  local fn = load(source, \"@\" .. key)\n");
+        bundle.push_str("  local fn = __load(source, \"@\" .. key)\n");
         bundle.push_str("  local ok, result = pcall(fn)\n");
         bundle.push_str("  _G.__luat_current_module = prev\n");
         bundle.push_str("  if not ok then error(result, 2) end\n");
@@ -1508,44 +1559,12 @@ _G.__bundle_debug = {
     /// When enabled, errors include detailed stack traces and source context.
     /// Recommended during development but adds some runtime overhead.
     pub fn set_development_mode(&self, enabled: bool) -> Result<()> {
+        // Error details come from the host side (mlua errors carry the Lua
+        // traceback); guest code only sees the flag.
         self.lua.globals().set("__DEV_MODE", enabled)?;
-        
-        if enabled {
-            // Install debug hooks
-            self.lua.load(r#"
-                -- Development mode error handler
-                function __dev_error_handler(err)
-                    local traceback = debug.traceback(err, 2)
-                    local info = debug.getinfo(2)
-                    
-                    local enhanced_error = {
-                        message = err,
-                        traceback = traceback,
-                        source = info.source,
-                        line = info.currentline,
-                        function_name = info.name or "anonymous"
-                    }
-                    
-                    return enhanced_error
-                end
-                
-                -- Development mode wrap all module renders with error handler
-                local original_pcall = pcall
-                _G.pcall = function(f, ...)
-                    return original_pcall(function(...)
-                        local ok, result = original_pcall(f, ...)
-                        if not ok and __DEV_MODE then
-                            result = __dev_error_handler(result)
-                        end
-                        return ok, result
-                    end, ...)
-                end
-            "#).exec()?;
-        }
-        
         Ok(())
     }
-    
+
     /// Loads a bundle and extracts source map information.
     ///
     /// Use this when loading bundles created with
@@ -1555,7 +1574,8 @@ _G.__bundle_debug = {
         let source_map = BundleSourceMap::new();
         
         // Execute the bundle code
-        self.lua.load(lua_code).exec()?;
+        let chunk = self.lua.load(lua_code).set_name("@luat_bundle").into_function()?;
+        self.run_bundle_chunk(chunk)?;
         
         // TODO: Extract sourcemap from Lua if needed
         

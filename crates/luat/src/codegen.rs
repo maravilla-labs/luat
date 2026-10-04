@@ -924,8 +924,8 @@ where
     let mut source_map = crate::sourcemap::BundleSourceMap::new();
 
     bundle.push_str("-- Bundled Lua template modules\n");
-    bundle.push_str("-- Use internal load function preserved by sandbox\n");
-    bundle.push_str("local __load = __luat_internal_load\n");
+    bundle.push_str("-- The engine passes its internal load function as the chunk argument\n");
+    bundle.push_str("local __load = ...\n");
     bundle.push_str("local __original_require = require\n");
     bundle.push_str("local __module_loaders = {}\n");
     bundle.push_str("local __modules = {}\n\n");
