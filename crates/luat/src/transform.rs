@@ -26,6 +26,7 @@
 
 use crate::ast::*;
 use crate::error::Result;
+use crate::marker::ReactiveMetadata;
 use std::collections::HashSet;
 
 /// Intermediate Representation of a transformed template.
@@ -42,6 +43,8 @@ pub struct IR {
     pub body: Vec<IRNode>,
     /// Set of component names used in this template.
     pub components: HashSet<String>,
+    /// Reactive variable metadata from script blocks.
+    pub reactive: ReactiveMetadata,
 }
 
 /// A node in the transformed intermediate representation.
@@ -139,6 +142,15 @@ pub enum IRAttribute {
     },
     /// A spread operator `{...expr}`.
     Spread(Expression),
+    /// An event handler `on:click={handler}`.
+    Event {
+        /// The event name (e.g., "click", "submit").
+        event: String,
+        /// Event modifiers (preventDefault, stopPropagation, etc.).
+        modifiers: Vec<EventModifier>,
+        /// The Lua expression for the handler.
+        handler: Expression,
+    },
 }
 
 /// The value of an IR attribute.
@@ -171,6 +183,7 @@ pub fn transform_ast(ast: TemplateAST) -> Result<IR> {
         regular_script: ast.regular_script,
         body,
         components,
+        reactive: ast.reactive,
     })
 }
 
@@ -359,6 +372,9 @@ fn transform_attributes(attributes: Vec<Attribute>) -> Result<Vec<IRAttribute>> 
             }
             Attribute::Spread(expr) => {
                 ir_attributes.push(IRAttribute::Spread(expr));
+            }
+            Attribute::Event { event, modifiers, handler } => {
+                ir_attributes.push(IRAttribute::Event { event, modifiers, handler });
             }
         }
     }

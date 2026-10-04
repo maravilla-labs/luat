@@ -23,7 +23,9 @@ luat build
 
 ## Documentation
 
-For full documentation, visit: https://github.com/maravilla-labs/luat
+For full documentation, visit: 
+- https://luat.maravillalabs.com/
+- https://github.com/maravilla-labs/luat
 
 ## License
 

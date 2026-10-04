@@ -1,7 +1,7 @@
 # Luat Development Makefile
 # Run `make help` to see available commands
 
-.PHONY: help build test check fmt clippy clean wasm wasm-check setup setup-wasm dev install
+.PHONY: help build test check fmt clippy clean wasm wasm-check wasm-client wasm-client-release setup setup-wasm dev install install-ssr
 
 # Default target
 help:
@@ -10,7 +10,8 @@ help:
 	@echo ""
 	@echo "Build Commands:"
 	@echo "  make build        Build all crates (native)"
-	@echo "  make install      Install luat CLI locally"
+	@echo "  make install      Install luat CLI with embedded WASM (hybrid mode)"
+	@echo "  make install-ssr  Install luat CLI without WASM (SSR-only, faster)"
 	@echo "  make test         Run all tests"
 	@echo "  make check        Type-check all crates"
 	@echo "  make clippy       Run clippy lints"
@@ -18,10 +19,12 @@ help:
 	@echo "  make clean        Clean build artifacts"
 	@echo ""
 	@echo "WASM Commands:"
-	@echo "  make wasm         Build luat-wasm for WASM (debug)"
-	@echo "  make wasm-release Build luat-wasm for WASM (release)"
-	@echo "  make wasm-check   Type-check WASM build (faster)"
-	@echo "  make wasm-test    Build and run WASM tests in Node.js"
+	@echo "  make wasm                Build luat-wasm for WASM (debug)"
+	@echo "  make wasm-release        Build luat-wasm for WASM (release)"
+	@echo "  make wasm-check          Type-check WASM build (faster)"
+	@echo "  make wasm-test           Build and run WASM tests in Node.js"
+	@echo "  make wasm-client         Build luat-client for WASM (debug)"
+	@echo "  make wasm-client-release Build luat-client for WASM (release)"
 	@echo ""
 	@echo "Setup Commands:"
 	@echo "  make setup        Setup development environment"
@@ -35,7 +38,10 @@ help:
 build:
 	cargo build --workspace
 
-install:
+install: wasm-client-release
+	cargo install --path crates/luat-cli
+
+install-ssr:
 	cargo install --path crates/luat-cli
 
 test:
@@ -85,6 +91,12 @@ wasm-release:
 
 wasm-test:
 	$(call ensure_emcc,cargo build --package luat-wasm --target wasm32-unknown-emscripten --release && node target/wasm32-unknown-emscripten/release/luat-wasm.js)
+
+wasm-client:
+	$(call ensure_emcc,cargo build --package luat-client --target wasm32-unknown-emscripten)
+
+wasm-client-release:
+	$(call ensure_emcc,cargo build --package luat-client --target wasm32-unknown-emscripten --release)
 
 # Setup commands
 setup:

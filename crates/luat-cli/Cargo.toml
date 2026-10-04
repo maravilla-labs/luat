@@ -22,7 +22,7 @@ path = "src/main.rs"
 
 [dependencies]
 include_dir = "0.7"
-luat = { workspace = true }
+luat = { workspace = true, features = ["client-markers"] }
 mlua = { workspace = true }
 clap = { workspace = true }
 axum = { workspace = true }

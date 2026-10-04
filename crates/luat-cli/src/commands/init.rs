@@ -11,6 +11,8 @@ use std::path::Path;
 
 static DEFAULT_TEMPLATE: Dir = include_dir!("$CARGO_MANIFEST_DIR/templates/default");
 static MINIMAL_TEMPLATE: Dir = include_dir!("$CARGO_MANIFEST_DIR/templates/minimal");
+static HYBRID_TEMPLATE: Dir = include_dir!("$CARGO_MANIFEST_DIR/templates/hybrid");
+static SPA_TEMPLATE: Dir = include_dir!("$CARGO_MANIFEST_DIR/templates/spa");
 
 /// Initializes a new LUAT project from a template.
 pub async fn run(name: Option<String>, template: Option<String>) -> anyhow::Result<()> {
@@ -36,6 +38,8 @@ pub async fn run(name: Option<String>, template: Option<String>) -> anyhow::Resu
 
     let template_dir = match template_name.as_str() {
         "minimal" => &MINIMAL_TEMPLATE,
+        "hybrid" => &HYBRID_TEMPLATE,
+        "spa" => &SPA_TEMPLATE,
         _ => &DEFAULT_TEMPLATE,
     };
 
@@ -55,11 +59,16 @@ fn select_template() -> anyhow::Result<String> {
     println!("Select a template:");
     println!();
     println!("  1. default (recommended)");
-    println!("     Full-featured starter with HTMX, Idiomorph, TypeScript,");
-    println!("     Tailwind CSS, and a todo example with form actions & fragments");
+    println!("     Full-featured SSR with HTMX, Tailwind, todo example");
     println!();
     println!("  2. minimal");
-    println!("     Simple starter with TypeScript and Tailwind CSS");
+    println!("     Simple SSR with TypeScript and Tailwind CSS");
+    println!();
+    println!("  3. hybrid");
+    println!("     Reactive counter with WASM client (no npm needed)");
+    println!();
+    println!("  4. spa");
+    println!("     Client-side rendering (experimental)");
     println!();
     print!("Enter choice [1]: ");
     io::stdout().flush()?;
@@ -71,6 +80,8 @@ fn select_template() -> anyhow::Result<String> {
     match input {
         "" | "1" | "default" => Ok("default".to_string()),
         "2" | "minimal" => Ok("minimal".to_string()),
+        "3" | "hybrid" => Ok("hybrid".to_string()),
+        "4" | "spa" => Ok("spa".to_string()),
         _ => {
             println!("Invalid choice, using default template");
             Ok("default".to_string())
@@ -167,8 +178,19 @@ fn print_success(project_name: &str, template_name: &str, is_current_dir: bool) 
     println!("  npm install");
     println!("  luat dev");
 
-    if template_name == "default" {
-        println!();
-        println!("Visit http://localhost:3000/todos to see the HTMX example.");
+    match template_name {
+        "default" => {
+            println!();
+            println!("Visit http://localhost:3000/todos to see the HTMX example.");
+        }
+        "hybrid" => {
+            println!();
+            println!("Visit http://localhost:3000 to see the reactive counter.");
+        }
+        "spa" => {
+            println!();
+            println!("Visit http://localhost:3000 to see the SPA counter (experimental).");
+        }
+        _ => {}
     }
 }

@@ -1,0 +1,25 @@
+[package]
+name = "luat-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "WASM client runtime for Luat reactive templates"
+
+[[bin]]
+name = "luat-client"
+path = "src/main.rs"
+
+[dependencies]
+# Lua VM for expression evaluation (same vendored Lua 5.4 as server)
+mlua = { version = "0.10.5", features = ["lua54", "vendored", "serialize"] }
+
+# JSON for API communication with JavaScript
+serde_json = "1.0"
+
+# Binary serialization (shared format with server)
+postcard = { workspace = true }
+base64 = { workspace = true }
+
+# Serialization for marker types
+serde = { workspace = true }

@@ -17,9 +17,24 @@ use crate::toolchain::{build::BuildOrchestrator, prepare_build_tools, Tool};
 use crate::watcher::FileWatcher;
 
 /// Runs the development server with hot reload.
-pub async fn run(host: &str, port: u16, verbose: bool, quiet: bool) -> anyhow::Result<()> {
+pub async fn run(host: &str, port: u16, verbose: bool, quiet: bool, clean: bool) -> anyhow::Result<()> {
     let config = Config::load()?;
     let working_dir = std::env::current_dir()?;
+
+    // If --clean flag is set, delete generated assets before provisioning
+    if clean {
+        let luat_dir = working_dir.join(&config.dev.public_dir).join("_luat");
+        if luat_dir.exists() {
+            if !quiet {
+                println!(
+                    "{} {}",
+                    style("Cleaning:").cyan(),
+                    style(luat_dir.display().to_string()).dim()
+                );
+            }
+            std::fs::remove_dir_all(&luat_dir)?;
+        }
+    }
 
     // Prepare frontend build tools if any are enabled
     let enabled_tools = config.frontend.get_enabled_tools();

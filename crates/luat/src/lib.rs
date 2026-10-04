@@ -81,6 +81,8 @@ mod body;
 pub mod router;
 /// Runtime execution for server-side Lua code.
 pub mod runtime;
+/// Reactive markers for client-side resumability.
+pub mod marker;
 
 /// WASM bindings for browser usage.
 #[cfg(target_arch = "wasm32")]

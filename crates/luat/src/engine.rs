@@ -915,6 +915,17 @@ impl<R: ResourceResolver> Engine<R> {
             }
         };
 
+        // Server runtime API: state() returns initial, derived() calls fn()
+        let state_fn = self.lua.create_function(|_, (_name, initial): (String, Value)| {
+            Ok(initial)
+        })?;
+        runtime.set("state", state_fn)?;
+
+        let derived_fn = self.lua.create_function(|_, (_name, func, _deps): (String, mlua::Function, Value)| {
+            func.call::<Value>(())
+        })?;
+        runtime.set("derived", derived_fn)?;
+
         // Call render function with both context and runtime
         let result: String = match render_func.call((self.lua.to_value(context)?, &runtime)) {
             Ok(r) => r,
@@ -1015,10 +1026,72 @@ impl<R: ResourceResolver> Engine<R> {
             props.set(key.clone(), value.clone())?;
         }
 
-        // Call the render function directly
-        let result: String = render_func.call(props)?;
+        // Create server runtime with state/derived API
+        let runtime = self.lua.create_table()?;
+        let stack: Table = self.lua.create_sequence_from::<Table>(vec![])?;
+        runtime.set("context_stack", stack)?;
+
+        let state_fn = self.lua.create_function(|_, (_name, initial): (String, Value)| {
+            Ok(initial)
+        })?;
+        runtime.set("state", state_fn)?;
+
+        let derived_fn = self.lua.create_function(|_, (_name, func, _deps): (String, mlua::Function, Value)| {
+            func.call::<Value>(())
+        })?;
+        runtime.set("derived", derived_fn)?;
+
+        // Call the render function with props and runtime
+        let result: String = render_func.call((props, runtime))?;
 
         Ok(result)
+    }
+
+    /// Returns the Lua bundle JSON for a module and its dependencies.
+    ///
+    /// The bundle is a JSON object mapping module names to their compiled Lua source:
+    /// `{"+page": "local exports = {} ...", "Button": "local exports = {} ..."}`
+    ///
+    /// This is used for client-side hydration: the same code the server used to render
+    /// is sent to the client for re-rendering on state changes.
+    pub fn get_bundle_json(&self, entry: &str) -> Result<String> {
+        let module = self.compile_entry(entry)?;
+        let mut bundle: HashMap<String, String> = HashMap::new();
+
+        // Add the entry module
+        let module_name = std::path::Path::new(entry)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        bundle.insert(module_name, module.lua_code.clone());
+
+        // Add all dependencies
+        for dep in &module.dependencies {
+            if let Ok(resolved) = self.resolver.resolve("", dep) {
+                let dep_code = if dep.ends_with(".luat") {
+                    let ast = parse_template(&resolved.source)?;
+                    let ir = transform_ast(ast)?;
+                    validate_ir(&ir)?;
+                    let dep_name = std::path::Path::new(dep)
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    generate_lua_code(ir, &dep_name)?
+                } else {
+                    resolved.source
+                };
+                let dep_module_name = std::path::Path::new(dep)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+                bundle.insert(dep_module_name, dep_code);
+            }
+        }
+
+        Ok(serde_json::to_string(&bundle).unwrap_or_else(|_| "{}".to_string()))
     }
 
     /// Creates an empty Lua table for building template context.
@@ -1119,6 +1192,17 @@ impl<R: ResourceResolver> Engine<R> {
                 runtime
             }
         };
+
+        // Server runtime API: state() returns initial, derived() calls fn()
+        let state_fn = self.lua.create_function(|_, (_name, initial): (String, Value)| {
+            Ok(initial)
+        })?;
+        runtime.set("state", state_fn)?;
+
+        let derived_fn = self.lua.create_function(|_, (_name, func, _deps): (String, mlua::Function, Value)| {
+            func.call::<Value>(())
+        })?;
+        runtime.set("derived", derived_fn)?;
 
         let result: String = render_func.call_async((context, &runtime)).await?;
         Ok(result)

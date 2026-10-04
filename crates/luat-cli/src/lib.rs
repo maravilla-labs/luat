@@ -46,5 +46,7 @@ pub mod router;
 pub mod server;
 /// Frontend toolchain management (Vite, Bun, npm).
 pub mod toolchain;
+/// Embedded WASM client assets for hybrid rendering.
+pub mod wasm_assets;
 /// File system watching for hot reload.
 pub mod watcher;

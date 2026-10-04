@@ -23,6 +23,7 @@
 //! - Control flow blocks (`{#if}`, `{#each}`)
 //! - Special directives (`{@html}`, `{@local}`, `{@render}`)
 
+use crate::marker::ReactiveMetadata;
 use serde::{Deserialize, Serialize};
 
 /// AST node types representing template structure.
@@ -155,17 +156,18 @@ pub enum Node {
 
 /// Attribute on an element or component.
 ///
-/// Attributes can be named key-value pairs or spread operators that expand
-/// a Lua table into individual attributes/props.
+/// Attributes can be named key-value pairs, spread operators, or event handlers.
 ///
 /// # Examples
 ///
 /// ```text
-/// <div class="container">     <!-- Named with static value -->
-/// <div class="{className}">   <!-- Named with dynamic value -->
-/// <div {class}>               <!-- Shorthand (name = value) -->
-/// <Button {...props}>         <!-- Spread operator -->
-/// <input disabled>            <!-- Boolean attribute -->
+/// <div class="container">                  <!-- Named with static value -->
+/// <div class="{className}">                <!-- Named with dynamic value -->
+/// <div {class}>                            <!-- Shorthand (name = value) -->
+/// <Button {...props}>                      <!-- Spread operator -->
+/// <input disabled>                         <!-- Boolean attribute -->
+/// <button on:click={handler}>              <!-- Event handler -->
+/// <form on:submit|preventDefault={submit}> <!-- Event with modifier -->
 /// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Attribute {
@@ -178,6 +180,35 @@ pub enum Attribute {
     },
     /// A spread attribute `{...expr}` that expands a table into attributes.
     Spread(Expression),
+    /// An event handler `on:click={handler}` or `on:submit|preventDefault={handler}`.
+    Event {
+        /// The event name (e.g., "click", "submit", "keydown").
+        event: String,
+        /// Optional modifiers (e.g., preventDefault, stopPropagation).
+        modifiers: Vec<EventModifier>,
+        /// The Lua expression for the handler.
+        handler: Expression,
+    },
+}
+
+/// Event handler modifiers that affect how the event is processed.
+///
+/// Modifiers are specified after the event name with `|` separators:
+/// `on:submit|preventDefault|stopPropagation={handler}`
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum EventModifier {
+    /// Calls `event.preventDefault()` before the handler.
+    PreventDefault,
+    /// Calls `event.stopPropagation()` before the handler.
+    StopPropagation,
+    /// Only fires if `event.target === event.currentTarget`.
+    Self_,
+    /// Removes the listener after first invocation.
+    Once,
+    /// Sets `{ passive: true }` on the listener.
+    Passive,
+    /// Sets `{ capture: true }` on the listener.
+    Capture,
 }
 
 /// The value portion of a named attribute.
@@ -240,8 +271,12 @@ pub enum ScriptType {
 pub struct ScriptBlock {
     /// Whether this is a module or regular script.
     pub script_type: ScriptType,
-    /// The Lua source code.
+    /// The processed Lua source code (magic functions transformed).
     pub content: String,
+    /// The raw script content before magic function processing.
+    /// Used by the reactive codegen to extract $state/$derived metadata.
+    #[serde(skip)]
+    pub raw_content: Option<String>,
     /// Source location of the script block.
     pub span: Span,
 }
@@ -262,6 +297,9 @@ pub struct TemplateAST {
     pub imports: Vec<String>,
     /// Canonical file path, set by the engine after resolution.
     pub path: Option<String>,
+    /// Reactive metadata extracted from script blocks ($state/$derived declarations).
+    #[serde(skip)]
+    pub reactive: ReactiveMetadata,
 }
 
 impl TemplateAST {
@@ -273,6 +311,7 @@ impl TemplateAST {
             body: Vec::new(),
             imports: Vec::new(),
             path: None,
+            reactive: ReactiveMetadata::default(),
         }
     }
 }

@@ -25,7 +25,7 @@ use tokio::sync::{broadcast, RwLock};
 use tower_http::services::ServeDir;
 
 use super::livereload::handle_websocket;
-use crate::config::Config;
+use crate::config::{Config, RenderingMode};
 use crate::kv::KVManager;
 use crate::router::{Route, Router as LuatRouter};
 
@@ -47,6 +47,8 @@ pub struct AppState {
     pub app_html_template: Option<String>,
     /// KV store manager for server-side data persistence.
     pub kv_manager: Arc<KVManager>,
+    /// Whether WASM client assets are available in static/_luat/ for hybrid mode.
+    pub hybrid_enabled: bool,
 }
 
 /// Creates and starts the development HTTP server.
@@ -134,6 +136,13 @@ pub async fn create_server(
         None
     };
 
+    // Set up WASM client assets for hybrid rendering mode
+    let hybrid_enabled = if config.rendering.mode == RenderingMode::Hybrid {
+        provision_wasm_assets(&working_dir, &config.dev.public_dir)
+    } else {
+        false
+    };
+
     let state = Arc::new(AppState {
         engine: RwLock::new(engine),
         reload_tx,
@@ -142,6 +151,7 @@ pub async fn create_server(
         routes_dir: templates_dir,
         app_html_template,
         kv_manager,
+        hybrid_enabled,
     });
 
     // Build the app with appropriate routes
@@ -308,6 +318,7 @@ fn luat_response_to_axum(
     response: LuatResponse,
     state: &AppState,
     request_headers: &HashMap<String, String>,
+    bundle_json: Option<&str>,
 ) -> Response {
     match response {
         LuatResponse::Html { status, mut headers, body } => {
@@ -350,8 +361,18 @@ fn luat_response_to_axum(
                 (wrap_with_app_html(app_html, &body, &title, &head_assets), true, vec![])
             };
 
-            let html_with_livereload = if include_livereload {
-                inject_livereload_script(&full_html)
+            let html_with_scripts = if include_livereload {
+                let mut html = inject_livereload_script(&full_html);
+                // Inject WASM client script and Lua bundle for hybrid rendering mode
+                if state.config.rendering.mode == RenderingMode::Hybrid
+                    && state.hybrid_enabled
+                {
+                    if let Some(bundle) = bundle_json {
+                        html = inject_lua_bundle(&html, bundle);
+                    }
+                    html = inject_client_script(&html);
+                }
+                html
             } else {
                 full_html
             };
@@ -370,7 +391,7 @@ fn luat_response_to_axum(
             builder = builder.header("content-type", "text/html; charset=utf-8");
 
             builder
-                .body(Body::from(html_with_livereload))
+                .body(Body::from(html_with_scripts))
                 .unwrap_or_else(|_| {
                     (StatusCode::INTERNAL_SERVER_ERROR, "Failed to build response").into_response()
                 })
@@ -421,7 +442,17 @@ async fn handle_route(
     let engine = state.engine.read().await;
 
     match engine.respond_async(&engine_route, &request).await {
-        Ok(response) => luat_response_to_axum(response, state, &request_headers),
+        Ok(response) => {
+            // Get bundle JSON for hybrid mode
+            let bundle_json = if state.config.rendering.mode == RenderingMode::Hybrid && state.hybrid_enabled {
+                engine_route.page.as_ref().and_then(|page| {
+                    engine.get_bundle_json(page).ok()
+                })
+            } else {
+                None
+            };
+            luat_response_to_axum(response, state, &request_headers, bundle_json.as_deref())
+        }
         Err(e) => error_page(&format!("Error: {}", e)),
     }
 }
@@ -637,6 +668,172 @@ impl Clone for Config {
             },
             frontend: self.frontend.clone(),
             routing: self.routing.clone(),
+            rendering: self.rendering.clone(),
         }
+    }
+}
+
+// ============================================================================
+// Hybrid Mode: WASM Client Asset Provisioning
+// ============================================================================
+
+/// Provision WASM client assets into `{public_dir}/_luat/`.
+///
+/// Assets are served by the existing `/public` ServeDir, so hot reload and
+/// file watching work automatically.
+///
+/// Resolution order:
+/// 1. Embedded assets (from compile-time `build.rs` inclusion)
+/// 2. Filesystem lookup (workspace `target/` dir, for development iteration)
+///
+/// Returns `true` if assets were successfully provisioned.
+fn provision_wasm_assets(working_dir: &std::path::Path, public_dir: &str) -> bool {
+    let target_dir = working_dir.join(public_dir).join("_luat");
+
+    // Skip provisioning if assets already exist (use --clean to force refresh)
+    let wasm_exists = target_dir.join("luat_client.wasm").exists();
+    let mjs_exists = target_dir.join("luat-client-wasm.mjs").exists();
+    let js_exists = target_dir.join("luat-client.js").exists();
+    if wasm_exists && mjs_exists && js_exists {
+        return true;
+    }
+
+    // Try embedded assets first (from cargo install builds)
+    if let (Some(wasm), Some(emscripten), Some(client)) = (
+        crate::wasm_assets::wasm_binary(),
+        crate::wasm_assets::emscripten_js(),
+        crate::wasm_assets::client_js(),
+    ) {
+        if let Err(e) = std::fs::create_dir_all(&target_dir) {
+            eprintln!("Warning: Could not create {}: {}", target_dir.display(), e);
+            return false;
+        }
+
+        // Write WASM binary
+        if let Err(e) = std::fs::write(target_dir.join("luat_client.wasm"), wasm) {
+            eprintln!("Warning: Could not write luat_client.wasm: {}", e);
+            return false;
+        }
+
+        // Write Emscripten JS as ESM
+        let esm_content = format!("{}\nexport default Module;\n", emscripten);
+        if let Err(e) = std::fs::write(target_dir.join("luat-client-wasm.mjs"), &esm_content) {
+            eprintln!("Warning: Could not write luat-client-wasm.mjs: {}", e);
+            return false;
+        }
+
+        // Write client JS runtime
+        if let Err(e) = std::fs::write(target_dir.join("luat-client.js"), client) {
+            eprintln!("Warning: Could not write luat-client.js: {}", e);
+            return false;
+        }
+
+        println!("Extracted embedded WASM client assets to {}", target_dir.display());
+        return true;
+    }
+
+    // Fall back to filesystem lookup (development mode)
+    let wasm_candidates = [
+        working_dir.join("target/wasm32-unknown-emscripten/release"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/wasm32-unknown-emscripten/release"),
+    ];
+
+    let wasm_src_dir = wasm_candidates.iter().find(|dir| {
+        dir.join("luat_client.wasm").exists() && dir.join("luat-client.js").exists()
+    });
+
+    let wasm_src_dir = match wasm_src_dir {
+        Some(d) => d,
+        None => {
+            eprintln!("Warning: Hybrid mode enabled but WASM client artifacts not found.");
+            eprintln!("  Run `make wasm-client-release` to build them.");
+            return false;
+        }
+    };
+
+    // Find client JS runtime
+    let client_js_candidates = [
+        working_dir.join("crates/luat-client/luat-client.js"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../luat-client/luat-client.js"),
+    ];
+
+    let client_js_path = match client_js_candidates.iter().find(|p| p.exists()) {
+        Some(p) => p,
+        None => {
+            eprintln!("Warning: luat-client.js runtime not found.");
+            return false;
+        }
+    };
+
+    // Write files to static/_luat/
+    if let Err(e) = std::fs::create_dir_all(&target_dir) {
+        eprintln!("Warning: Could not create {}: {}", target_dir.display(), e);
+        return false;
+    }
+
+    // Copy WASM binary
+    if let Err(e) = std::fs::copy(wasm_src_dir.join("luat_client.wasm"), target_dir.join("luat_client.wasm")) {
+        eprintln!("Warning: Could not copy luat_client.wasm: {}", e);
+        return false;
+    }
+
+    // Copy Emscripten JS as ESM
+    match std::fs::read_to_string(wasm_src_dir.join("luat-client.js")) {
+        Ok(content) => {
+            let esm_content = format!("{}\nexport default Module;\n", content);
+            if let Err(e) = std::fs::write(target_dir.join("luat-client-wasm.mjs"), &esm_content) {
+                eprintln!("Warning: Could not write luat-client-wasm.mjs: {}", e);
+                return false;
+            }
+        }
+        Err(e) => {
+            eprintln!("Warning: Could not read emscripten JS: {}", e);
+            return false;
+        }
+    }
+
+    // Copy client JS runtime
+    if let Err(e) = std::fs::copy(client_js_path, target_dir.join("luat-client.js")) {
+        eprintln!("Warning: Could not copy luat-client.js: {}", e);
+        return false;
+    }
+
+    println!("Provisioned WASM client assets to {}", target_dir.display());
+    true
+}
+
+/// Inject the Lua bundle as JSON for client-side hydration.
+/// Inserts a script tag with the bundle data before `</body>`.
+fn inject_lua_bundle(html: &str, bundle_json: &str) -> String {
+    let script = format!(
+        "\n<script id=\"luat-bundle\" type=\"application/json\">{}</script>\n",
+        bundle_json
+    );
+    if let Some(pos) = html.to_lowercase().rfind("</body>") {
+        let mut result = html.to_string();
+        result.insert_str(pos, &script);
+        result
+    } else {
+        format!("{}{}", html, script)
+    }
+}
+
+/// Inject the luat-client script tag for hybrid rendering mode.
+/// Inserts a module script before `</body>` that loads the WASM client.
+fn inject_client_script(html: &str) -> String {
+    let script = r#"
+<script type="module">
+  import { initClient } from '/public/_luat/luat-client.js';
+  await initClient('/public/_luat');
+</script>
+"#;
+
+    if let Some(pos) = html.to_lowercase().rfind("</body>") {
+        let mut result = html.to_string();
+        result.insert_str(pos, script);
+        result
+    } else {
+        format!("{}{}", html, script)
     }
 }

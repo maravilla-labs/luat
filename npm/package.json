@@ -27,5 +27,8 @@
   "homepage": "https://github.com/maravilla-labs/luat#readme",
   "engines": {
     "node": ">=16"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

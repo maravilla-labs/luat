@@ -34,9 +34,9 @@ enum Commands {
     Init {
         /// Project name (defaults to current directory name)
         name: Option<String>,
-        /// Template to use: default, htmx
-        #[arg(short, long, default_value = "default")]
-        template: String,
+        /// Template: default, minimal, hybrid, spa
+        #[arg(short, long)]
+        template: Option<String>,
     },
     /// Start development server with live reload
     Dev {
@@ -46,6 +46,9 @@ enum Commands {
         /// Host to bind to
         #[arg(long, default_value = "127.0.0.1")]
         host: String,
+        /// Delete generated assets (public/_luat/) before starting
+        #[arg(long)]
+        clean: bool,
     },
     /// Build templates for production
     Build {
@@ -83,10 +86,10 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Init { name, template } => {
-            commands::init::run(name, Some(template)).await
+            commands::init::run(name, template).await
         }
-        Commands::Dev { port, host } => {
-            commands::dev::run(&host, port, cli.verbose, cli.quiet).await
+        Commands::Dev { port, host, clean } => {
+            commands::dev::run(&host, port, cli.verbose, cli.quiet, clean).await
         }
         Commands::Build { source, output } => {
             commands::build::run(source, &output).await

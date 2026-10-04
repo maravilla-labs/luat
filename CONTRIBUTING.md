@@ -36,19 +36,44 @@ We provide a setup script that installs all development dependencies:
 
 ### Building
 
+We use a `Makefile` for common development tasks. Run `make help` to see all available commands.
+
 ```bash
 # Build all crates
-cargo build --workspace
+make build
+
+# Install CLI with embedded WASM client (hybrid mode support)
+make install
+
+# Install CLI without WASM (SSR-only, faster compile)
+make install-ssr
 
 # Run tests
-cargo test --workspace
+make test
 
 # Run clippy
-cargo clippy --workspace -- -D warnings
+make clippy
 
 # Format code
-cargo fmt --all
+make fmt
 ```
+
+<details>
+<summary>Alternative: using cargo directly</summary>
+
+```bash
+cargo build --workspace
+cargo test --workspace
+cargo clippy --workspace -- -D warnings
+cargo fmt --all
+
+# Install without WASM (SSR-only)
+cargo install --path crates/luat-cli
+```
+
+Note: `cargo install` alone won't include WASM client assets. Use `make install` to build WASM first, which embeds the artifacts into the binary for hybrid mode support.
+
+</details>
 
 ## Architecture Overview
 
@@ -194,9 +219,21 @@ cargo run -p luat-cli -- --help
 # Start dev server
 cargo run -p luat-cli -- dev
 
-# Initialize a new project
+# Initialize a new project (shows template menu)
 cargo run -p luat-cli -- init test-project
+
+# Initialize with a specific template
+cargo run -p luat-cli -- init test-project --template hybrid
 ```
+
+**Available templates:**
+
+| Template | Description |
+|----------|-------------|
+| `default` | Full-featured SSR with HTMX, Tailwind, todo example |
+| `minimal` | Simple SSR with TypeScript and Tailwind CSS |
+| `hybrid` | Reactive counter with WASM client |
+| `spa` | Client-side rendering (experimental) |
 
 ## Code Style
 

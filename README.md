@@ -45,7 +45,13 @@ npm install -g @maravilla-labs/luat
 # Shell script (Linux/macOS)
 curl -fsSL https://raw.githubusercontent.com/maravilla-labs/luat/main/scripts/install.sh | sh
 
-# Cargo (Rust developers)
+# From source with hybrid mode (requires Emscripten SDK)
+make install
+
+# From source, SSR-only (no WASM needed, faster)
+make install-ssr
+
+# Cargo (SSR-only, no WASM embedded)
 cargo install luat-cli
 ```
 

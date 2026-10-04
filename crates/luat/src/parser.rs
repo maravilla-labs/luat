@@ -207,6 +207,11 @@ pub fn parse_template(source: &str) -> Result<TemplateAST> {
                                                         &script_block.content,
                                                     );
                                                     ast.imports.extend(deps);
+                                                    // Extract reactive metadata from raw script content
+                                                    if let Some(raw) = &script_block.raw_content {
+                                                        let (_, metadata) = crate::script_processor::process_script_content_with_metadata(raw);
+                                                        ast.reactive = metadata;
+                                                    }
                                                     ast.regular_script = Some(script_block);
                                                     has_regular_script = true;
                                                 }
@@ -309,29 +314,29 @@ fn parse_script_block(
     script_type: ScriptType,
 ) -> Result<ScriptBlock> {
     let span = pair_to_span(&pair);
-    let content = extract_script_content(pair)?;
+    let (content, raw_content) = extract_script_content(pair)?;
 
     Ok(ScriptBlock {
         script_type,
         content,
+        raw_content: Some(raw_content),
         span,
     })
 }
 
-fn extract_script_content(script_pair: pest::iterators::Pair<Rule>) -> Result<String> {
+/// Returns (processed_content, raw_content)
+fn extract_script_content(script_pair: pest::iterators::Pair<Rule>) -> Result<(String, String)> {
     let span = script_pair.as_span(); // Capture span before moving script_pair
 
     for pair in script_pair.into_inner() {
         if pair.as_rule() == Rule::script_content {
             // Extract the raw content between the script tags
-            let content = pair.as_str().trim().to_string();
+            let raw_content = pair.as_str().trim().to_string();
 
             // Process the script content using AST-based parsing
-            let processed_content = parse_lua_script_with_magic(&content)?;
+            let processed_content = parse_lua_script_with_magic(&raw_content)?;
 
-            // We don't parse the content here - we trust that the Lua runtime will handle it
-            // This allows string literals containing </script> to work correctly
-            return Ok(processed_content);
+            return Ok((processed_content, raw_content));
         }
     }
 
@@ -1186,6 +1191,38 @@ fn parse_attribute(pair: pest::iterators::Pair<Rule>) -> Result<Attribute> {
             }
 
             if let Some(value) = value {
+                // Check for on:event syntax (e.g., on:click, on:submit|preventDefault)
+                if name.starts_with("on:") {
+                    let event_part = &name[3..]; // strip "on:"
+                    let parts: Vec<&str> = event_part.split('|').collect();
+                    let event_name = parts[0].to_string();
+                    let modifiers = parts[1..]
+                        .iter()
+                        .filter_map(|m| parse_event_modifier(m))
+                        .collect();
+                    // Extract the expression from the attribute value
+                    let handler = match value {
+                        AttributeValue::Dynamic(expr) => expr,
+                        AttributeValue::Shorthand(expr) => expr,
+                        _ => {
+                            return Err(LuatError::ParseError {
+                                message: format!(
+                                    "Event handler on:{} must use a dynamic expression value (e.g., on:{}={{handler}})",
+                                    event_name, event_name
+                                ),
+                                line: span.start_pos().line_col().0,
+                                column: span.start_pos().line_col().1,
+                                file: None,
+                                source_context: None,
+                            });
+                        }
+                    };
+                    return Ok(Attribute::Event {
+                        event: event_name,
+                        modifiers,
+                        handler,
+                    });
+                }
                 return Ok(Attribute::Named { name, value });
             }
         }
@@ -1230,6 +1267,19 @@ fn escape_lua_string_for_expr(s: &str) -> String {
         .replace('\n', "\\n")
         .replace('\r', "\\r")
         .replace('\t', "\\t")
+}
+
+/// Parses an event modifier string into an `EventModifier` enum variant.
+fn parse_event_modifier(modifier: &str) -> Option<EventModifier> {
+    match modifier {
+        "preventDefault" => Some(EventModifier::PreventDefault),
+        "stopPropagation" => Some(EventModifier::StopPropagation),
+        "self" => Some(EventModifier::Self_),
+        "once" => Some(EventModifier::Once),
+        "passive" => Some(EventModifier::Passive),
+        "capture" => Some(EventModifier::Capture),
+        _ => None, // Unknown modifiers are silently ignored
+    }
 }
 
 fn parse_quoted_string_expression(inner: &str) -> String {
@@ -1456,6 +1506,90 @@ mod tests {
                         }
                     }
                     _ => panic!("Expected Named attribute"),
+                }
+            }
+            _ => panic!("Expected ElementNode"),
+        }
+    }
+
+    #[test]
+    fn test_parse_event_attribute() {
+        let source = r#"<button on:click={handleClick}>Click</button>"#;
+        let ast = parse_template(source).unwrap();
+
+        match &ast.body[0] {
+            Node::ElementNode { tag, attributes, .. } => {
+                assert_eq!(tag, "button");
+                assert_eq!(attributes.len(), 1);
+                match &attributes[0] {
+                    Attribute::Event { event, modifiers, handler } => {
+                        assert_eq!(event, "click");
+                        assert!(modifiers.is_empty());
+                        assert_eq!(handler.content, "handleClick");
+                    }
+                    _ => panic!("Expected Event attribute"),
+                }
+            }
+            _ => panic!("Expected ElementNode"),
+        }
+    }
+
+    #[test]
+    fn test_parse_event_with_modifiers() {
+        let source = r#"<form on:submit|preventDefault={handleSubmit}>Submit</form>"#;
+        let ast = parse_template(source).unwrap();
+
+        match &ast.body[0] {
+            Node::ElementNode { tag, attributes, .. } => {
+                assert_eq!(tag, "form");
+                match &attributes[0] {
+                    Attribute::Event { event, modifiers, handler } => {
+                        assert_eq!(event, "submit");
+                        assert_eq!(modifiers.len(), 1);
+                        assert_eq!(modifiers[0], EventModifier::PreventDefault);
+                        assert_eq!(handler.content, "handleSubmit");
+                    }
+                    _ => panic!("Expected Event attribute"),
+                }
+            }
+            _ => panic!("Expected ElementNode"),
+        }
+    }
+
+    #[test]
+    fn test_parse_event_multiple_modifiers() {
+        let source = r#"<div on:click|stopPropagation|self={handler}>X</div>"#;
+        let ast = parse_template(source).unwrap();
+
+        match &ast.body[0] {
+            Node::ElementNode { attributes, .. } => {
+                match &attributes[0] {
+                    Attribute::Event { event, modifiers, .. } => {
+                        assert_eq!(event, "click");
+                        assert_eq!(modifiers.len(), 2);
+                        assert_eq!(modifiers[0], EventModifier::StopPropagation);
+                        assert_eq!(modifiers[1], EventModifier::Self_);
+                    }
+                    _ => panic!("Expected Event attribute"),
+                }
+            }
+            _ => panic!("Expected ElementNode"),
+        }
+    }
+
+    #[test]
+    fn test_parse_event_inline_expression() {
+        let source = r#"<button on:click={count = count + 1}>+1</button>"#;
+        let ast = parse_template(source).unwrap();
+
+        match &ast.body[0] {
+            Node::ElementNode { attributes, .. } => {
+                match &attributes[0] {
+                    Attribute::Event { event, handler, .. } => {
+                        assert_eq!(event, "click");
+                        assert_eq!(handler.content, "count = count + 1");
+                    }
+                    _ => panic!("Expected Event attribute"),
                 }
             }
             _ => panic!("Expected ElementNode"),

@@ -35,6 +35,9 @@
 
 use crate::ast::*;
 use crate::error::Result;
+#[cfg(feature = "client-markers")]
+use crate::marker;
+use crate::marker::ReactiveMetadata;
 use crate::transform::*;
 use std::collections::BTreeMap;
 
@@ -153,7 +156,8 @@ impl LuaSourceMap {
 /// let lua_code = generate_lua_code(ir, "Button")?;
 /// ```
 pub fn generate_lua_code(ir: IR, module_name: &str) -> Result<String> {
-    let mut generator = LuaCodeGenerator::new(module_name);
+    let reactive = ir.reactive.clone();
+    let mut generator = LuaCodeGenerator::new(module_name, reactive);
     generator.generate(ir)
 }
 
@@ -164,7 +168,8 @@ pub fn generate_lua_code(ir: IR, module_name: &str) -> Result<String> {
 ///
 /// The source map is also embedded in the Lua code as a comment.
 pub fn generate_lua_code_with_sourcemap(ir: IR, module_name: &str) -> Result<(String, LuaSourceMap)> {
-    let mut generator = LuaCodeGenerator::new(module_name);
+    let reactive = ir.reactive.clone();
+    let mut generator = LuaCodeGenerator::new(module_name, reactive);
     generator.generate_with_sourcemap(ir)
 }
 
@@ -177,10 +182,16 @@ struct LuaCodeGenerator {
     current_line: usize,
     /// Source map being built.
     source_map: LuaSourceMap,
+    /// Reactive metadata from the script block.
+    reactive: ReactiveMetadata,
+    /// Collected event handlers: (handler_name, handler_body_lua)
+    handlers: Vec<(String, String)>,
+    /// Next handler index (sequential across all event types)
+    handler_counter: usize,
 }
 
 impl LuaCodeGenerator {
-    fn new(module_name: &str) -> Self {
+    fn new(module_name: &str, reactive: ReactiveMetadata) -> Self {
         Self {
             module_name: module_name.to_string(),
             output: String::new(),
@@ -188,6 +199,9 @@ impl LuaCodeGenerator {
             local_vars: std::collections::HashSet::new(),
             current_line: 1,
             source_map: LuaSourceMap::new(),
+            reactive,
+            handlers: Vec::new(),
+            handler_counter: 0,
         }
     }
 
@@ -253,16 +267,34 @@ impl LuaCodeGenerator {
         // Generate regular script (executed on each render)
         if let Some(regular_script) = ir.regular_script {
             self.write_line("-- Regular script (executed on each render)");
-            self.write_line(&regular_script.content);
+            // Use script processor to transform $state/$derived to runtime API calls
+            let script_content = if let Some(raw) = &regular_script.raw_content {
+                let (processed, _) = crate::script_processor::process_script_content_with_metadata(raw);
+                processed
+            } else {
+                regular_script.content.clone()
+            };
+            // Write each line individually so indentation is applied correctly
+            for line in script_content.lines() {
+                self.write_line(line);
+            }
             // Parse local vars from script
-            self.local_vars = Self::parse_local_vars(&regular_script.content);
+            self.local_vars = Self::parse_local_vars(&script_content);
             self.write_line("");
         } else {
             self.local_vars.clear();
         }
 
+        // Emit template boundary start marker
+        #[cfg(feature = "client-markers")]
+        self.emit_template_boundary_marker();
+
         // Generate template body
         self.generate_nodes(&ir.body)?;
+
+        // Emit template boundary end marker
+        #[cfg(feature = "client-markers")]
+        self.write_line(&format!("__write(\"{}\")", marker::END_MARKER));
 
         self.write_line("");
         self.write_line("-- Pop the context scope after rendering");
@@ -285,6 +317,13 @@ impl LuaCodeGenerator {
         self.write_line("-- Exported module");
         self.write_line("exports.render = render");
         self.write_line(&format!("exports.moduleName = \"{}\"", escape_lua_string(&self.module_name)));
+
+        // Emit state/derived definitions for the bundle
+        self.emit_state_derived_defs();
+
+        // Emit event handlers
+        self.emit_handlers();
+
         self.write_line("");
         self.write_line("return exports");
 
@@ -519,7 +558,171 @@ impl LuaCodeGenerator {
                 source_line,
             );
         }
+
         Ok(())
+    }
+
+
+    /// Emits a TemplateBoundary marker at the start of the template body.
+    /// Uses simplified text format: <!--l:TB(module_name)-->
+    /// The end marker <!--/l--> is emitted after the template body.
+    #[cfg(feature = "client-markers")]
+    fn emit_template_boundary_marker(&mut self) {
+        let module_name = self.module_name.clone();
+        let marker_str = format!("<!--l:TB({})-->", module_name);
+        let escaped = escape_lua_string(&marker_str);
+        self.write_line(&format!("__write(\"{}\")", escaped));
+    }
+
+    /// Collects an event handler from an element's event attributes.
+    /// Returns the handler name (e.g., "click_0") for use in event markers.
+    fn collect_handler(&mut self, event_type: &str, handler_expr: &str) -> String {
+        let handler_name = format!("{}_{}", event_type, self.handler_counter);
+        self.handler_counter += 1;
+
+        // Rewrite the handler expression to use rt.get()/rt.set()
+        let rewritten = self.rewrite_handler_expr(handler_expr);
+        self.handlers.push((handler_name.clone(), rewritten));
+        handler_name
+    }
+
+    /// Rewrites a handler expression to use rt.get()/rt.set() for reactive vars.
+    ///
+    /// Input:  "count = count + 1"
+    /// Output: "rt.set(\"count\", rt.get(\"count\") + 1)"
+    ///
+    /// Input:  "count = count + 1; name = \"hi\""
+    /// Output: "rt.set(\"count\", rt.get(\"count\") + 1)\nrt.set(\"name\", \"hi\")"
+    fn rewrite_handler_expr(&self, expr: &str) -> String {
+        let reactive_names: Vec<&str> = self.reactive.vars.iter()
+            .map(|v| v.name.as_str())
+            .collect();
+
+        // Split by semicolons for multi-statement handlers
+        let statements: Vec<&str> = expr.split(';')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        let mut rewritten_stmts = Vec::new();
+        for stmt in statements {
+            rewritten_stmts.push(self.rewrite_single_statement(stmt, &reactive_names));
+        }
+        rewritten_stmts.join("\n")
+    }
+
+    /// Rewrites a single statement to use rt.get()/rt.set().
+    fn rewrite_single_statement(&self, stmt: &str, reactive_names: &[&str]) -> String {
+        // Check if this is an assignment: "varname = expr"
+        if let Some(eq_pos) = stmt.find('=') {
+            // Make sure it's not ==, ~=, <=, >=
+            let before_eq = if eq_pos > 0 { stmt.as_bytes()[eq_pos - 1] } else { 0 };
+            let after_eq = if eq_pos + 1 < stmt.len() { stmt.as_bytes()[eq_pos + 1] } else { 0 };
+            if before_eq != b'~' && before_eq != b'<' && before_eq != b'>' && after_eq != b'=' {
+                let lhs = stmt[..eq_pos].trim();
+                let rhs = stmt[eq_pos + 1..].trim();
+
+                // Check if LHS is a reactive variable name
+                if reactive_names.contains(&lhs) {
+                    let rewritten_rhs = self.replace_var_reads(rhs, reactive_names);
+                    return format!("rt.set(\"{}\", {})", lhs, rewritten_rhs);
+                }
+            }
+        }
+
+        // Not an assignment to a reactive var — just replace reads
+        self.replace_var_reads(stmt, reactive_names)
+    }
+
+    /// Replaces all reactive variable references in an expression with rt.get() calls.
+    fn replace_var_reads(&self, expr: &str, reactive_names: &[&str]) -> String {
+        let mut result = expr.to_string();
+        // Sort by length descending to avoid partial replacements (e.g., "count" before "c")
+        let mut sorted_names: Vec<&str> = reactive_names.to_vec();
+        sorted_names.sort_by(|a, b| b.len().cmp(&a.len()));
+
+        for name in sorted_names {
+            // Use word-boundary-aware replacement
+            result = replace_var_with_getter(&result, name);
+        }
+        result
+    }
+
+    /// Emits the collected handlers as exports.__handlers table entries.
+    /// Should be called after the render function is generated.
+    fn emit_handlers(&mut self) {
+        if self.handlers.is_empty() {
+            return;
+        }
+        self.write_line("");
+        self.write_line("-- Event handlers (compiled from on:event expressions)");
+        self.write_line("exports.__handlers = {}");
+        for (name, body) in self.handlers.clone() {
+            self.write_line(&format!("exports.__handlers[\"{}\"] = function(rt)", name));
+            self.indent();
+            // Body may be multi-line
+            for line in body.lines() {
+                self.write_line(line);
+            }
+            self.dedent();
+            self.write_line("end");
+        }
+    }
+
+    /// Emits state_defs and derived_defs tables as module exports.
+    /// These allow the client to know what reactive vars exist without parsing the Lua code.
+    fn emit_state_derived_defs(&mut self) {
+        use crate::marker::ReactiveKind;
+
+        let state_vars: Vec<_> = self.reactive.vars.iter()
+            .filter(|v| v.kind == ReactiveKind::State)
+            .cloned()
+            .collect::<Vec<_>>();
+        let derived_vars: Vec<_> = self.reactive.vars.iter()
+            .filter(|v| v.kind == ReactiveKind::Derived)
+            .cloned()
+            .collect::<Vec<_>>();
+
+        if !state_vars.is_empty() {
+            self.write_line("");
+            self.write_line("exports.state_defs = {");
+            self.indent();
+            for var in &state_vars {
+                self.write_line(&format!(
+                    "{{ name = \"{}\", initial = {} }},",
+                    escape_lua_string(&var.name),
+                    var.initial_expr
+                ));
+            }
+            self.dedent();
+            self.write_line("}");
+        }
+
+        if !derived_vars.is_empty() {
+            self.write_line("exports.derived_defs = {");
+            self.indent();
+            for var in &derived_vars {
+                let deps_lua = format!(
+                    "{{{}}}",
+                    var.deps.iter().map(|d| format!("\"{}\"", d)).collect::<Vec<_>>().join(", ")
+                );
+                self.write_line(&format!(
+                    "{{ name = \"{}\", expr = \"{}\", deps = {} }},",
+                    escape_lua_string(&var.name),
+                    escape_lua_string(&var.initial_expr),
+                    deps_lua
+                ));
+            }
+            self.dedent();
+            self.write_line("}");
+        }
+    }
+
+    /// Emits simplified event markers with just the handler name reference.
+    #[cfg(feature = "client-markers")]
+    fn emit_handler_event_marker(&mut self, handler_name: &str) {
+        let escaped = escape_lua_string(&format!("<!--l:EV({})-->", handler_name));
+        self.write_line(&format!("__write(\"{}\")", escaped));
     }
 
     fn generate_local_const(&mut self, name: &str, expression: &Expression) -> Result<()> {
@@ -647,6 +850,43 @@ impl LuaCodeGenerator {
         attributes: &[IRAttribute],
         children: &[IRNode],
     ) -> Result<()> {
+        // Collect event handlers and emit simplified event markers
+        #[cfg(feature = "client-markers")]
+        {
+            let event_attrs: Vec<_> = attributes.iter()
+                .filter_map(|attr| {
+                    if let IRAttribute::Event { event, handler, .. } = attr {
+                        Some((event.clone(), handler.content.trim().to_string()))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            for (event_type, handler_expr) in &event_attrs {
+                let handler_name = self.collect_handler(event_type, handler_expr);
+                self.emit_handler_event_marker(&handler_name);
+            }
+        }
+
+        // Collect handlers even without client-markers feature (for bundle export)
+        #[cfg(not(feature = "client-markers"))]
+        {
+            let event_attrs: Vec<_> = attributes.iter()
+                .filter_map(|attr| {
+                    if let IRAttribute::Event { event, handler, .. } = attr {
+                        Some((event.clone(), handler.content.trim().to_string()))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            for (event_type, handler_expr) in &event_attrs {
+                self.collect_handler(&event_type, &handler_expr);
+            }
+        }
+
         // Opening tag
         self.write_line(&format!("__write(\"<{}\")", tag)); // Removed trailing space here
 
@@ -733,6 +973,10 @@ impl LuaCodeGenerator {
                 self.dedent();
                 self.write_line("end");
             }
+            IRAttribute::Event { .. } => {
+                // Event handlers don't produce HTML attributes.
+                // They are handled via event markers emitted before the element.
+            }
         }
         Ok(())
     }
@@ -777,6 +1021,19 @@ impl LuaCodeGenerator {
                         source_line,
                     );
                 }
+                IRAttribute::Event { event, handler, .. } => {
+                    // Pass event handlers as on_<event> props to components
+                    let source_line = handler.span.line;
+                    let prop_name = format!("on_{}", event);
+                    self.write_line_with_source(
+                        &format!(
+                            "{} = function() {} end",
+                            component_prop_setter(&prop_name),
+                            handler.content.trim()
+                        ),
+                        source_line,
+                    );
+                }
             }
         }
 
@@ -789,8 +1046,7 @@ impl LuaCodeGenerator {
             self.write_line("end");
         }
 
-        // Call component render function
-        // self.write_line(&format!("__write({}.render(__component_props))", name));
+        // Call component render function (component emits its own template boundary)
         self.write_line(&format!(
             "__write({}.render(__component_props, runtime))",
             name
@@ -866,6 +1122,39 @@ impl LuaCodeGenerator {
 
         Ok((final_code, self.source_map.clone()))
     }
+}
+
+/// Replaces a variable name in an expression with rt.get("name").
+/// Uses word-boundary-aware matching to avoid replacing substrings.
+fn replace_var_with_getter(expr: &str, var_name: &str) -> String {
+    let mut result = String::new();
+    let mut search_from = 0;
+    let bytes = expr.as_bytes();
+
+    while search_from < expr.len() {
+        if let Some(pos) = expr[search_from..].find(var_name) {
+            let abs_pos = search_from + pos;
+            let end_pos = abs_pos + var_name.len();
+
+            let before_ok = abs_pos == 0
+                || (!bytes[abs_pos - 1].is_ascii_alphanumeric() && bytes[abs_pos - 1] != b'_');
+            let after_ok = end_pos >= expr.len()
+                || (!bytes[end_pos].is_ascii_alphanumeric() && bytes[end_pos] != b'_');
+
+            if before_ok && after_ok {
+                result.push_str(&expr[search_from..abs_pos]);
+                result.push_str(&format!("rt.get(\"{}\")", var_name));
+                search_from = end_pos;
+            } else {
+                result.push_str(&expr[search_from..abs_pos + 1]);
+                search_from = abs_pos + 1;
+            }
+        } else {
+            result.push_str(&expr[search_from..]);
+            break;
+        }
+    }
+    result
 }
 
 // Helper function to identify HTML void elements
@@ -1268,5 +1557,198 @@ mod tests {
 
         // The generated code should work
         assert!(lua_code.contains("function render"));
+    }
+
+    #[cfg(feature = "client-markers")]
+    #[test]
+    fn test_template_boundary_marker_emitted() {
+        let source = r#"<script>
+local count = $state(0)
+</script>
+<div>{count}</div>"#;
+        let ast = parse_template(source).unwrap();
+        let ir = transform_ast(ast).unwrap();
+
+        let lua_code = generate_lua_code(ir, "test").unwrap();
+        println!("Generated Lua code:\n{}", lua_code);
+
+        // TB marker should be emitted
+        assert!(lua_code.contains("<!--l:TB(test)-->"), "Expected template boundary start marker");
+        assert!(lua_code.contains("<!--/l-->"), "Expected template boundary end marker");
+        // Expression should still be rendered
+        assert!(lua_code.contains("html_escape(smart_tostring(count))"));
+    }
+
+    #[cfg(feature = "client-markers")]
+    #[test]
+    fn test_no_expression_or_attribute_markers() {
+        // New architecture: no Expression or Attribute markers, only TB and EV
+        let source = r#"<script>
+local count = $state(0)
+local doubled = $derived(count * 2)
+</script>
+<div class={count > 0 and "active" or ""}>{count} and {doubled}</div>"#;
+        let ast = parse_template(source).unwrap();
+        let ir = transform_ast(ast).unwrap();
+
+        let lua_code = generate_lua_code(ir, "test").unwrap();
+        println!("Generated Lua code:\n{}", lua_code);
+
+        // Only TB markers and EV markers should exist (no Expression/Attribute/DerivedDef)
+        // TB marker present
+        assert!(lua_code.contains("<!--l:TB(test)-->"));
+        // No base64-encoded markers (old format used base64)
+        for line in lua_code.lines() {
+            if line.contains("<!--l:") && !line.contains("<!--l:TB(") && !line.contains("<!--l:EV(") && !line.contains("<!--/l-->") {
+                panic!("Unexpected marker format in output: {}", line);
+            }
+        }
+    }
+
+    #[cfg(feature = "client-markers")]
+    #[test]
+    fn test_event_marker_emitted() {
+        let source = r#"<button on:click={handleClick}>Click</button>"#;
+        let ast = parse_template(source).unwrap();
+        let ir = transform_ast(ast).unwrap();
+
+        let lua_code = generate_lua_code(ir, "test").unwrap();
+        println!("Generated Lua code:\n{}", lua_code);
+
+        // EV marker should appear before the element
+        assert!(lua_code.contains("<!--l:EV(click_0)-->"), "Expected EV marker with handler name");
+        // The button opening tag should come after the marker
+        let marker_pos = lua_code.find("<!--l:EV(").unwrap();
+        let button_pos = lua_code.find("<button").unwrap();
+        assert!(marker_pos < button_pos, "EV marker should precede element");
+        // The event handler should NOT appear as an HTML attribute
+        assert!(!lua_code.contains("on:click"), "Event should not be an HTML attribute");
+    }
+
+    #[cfg(feature = "client-markers")]
+    #[test]
+    fn test_event_handler_function_generated() {
+        let source = r#"<script>
+local count = $state(0)
+</script>
+<button on:click={count = count + 1}>Inc</button>"#;
+        let ast = parse_template(source).unwrap();
+        let ir = transform_ast(ast).unwrap();
+
+        let lua_code = generate_lua_code(ir, "test").unwrap();
+        println!("Generated Lua code:\n{}", lua_code);
+
+        // Handler function should be generated
+        assert!(lua_code.contains("exports.__handlers[\"click_0\"]"), "Expected handler function");
+        assert!(lua_code.contains("function(rt)"), "Handler should take rt parameter");
+        // Handler should use rt.get/rt.set
+        assert!(lua_code.contains("rt.set("), "Handler should use rt.set");
+        assert!(lua_code.contains("rt.get("), "Handler should use rt.get");
+        // EV marker should reference the handler
+        assert!(lua_code.contains("<!--l:EV(click_0)-->"));
+    }
+
+    #[cfg(feature = "client-markers")]
+    #[test]
+    fn test_multiple_event_handlers_get_unique_names() {
+        let source = r#"<script>
+local count = $state(0)
+</script>
+<button on:click={count = count + 1}>Inc</button>
+<button on:click={count = count - 1}>Dec</button>"#;
+        let ast = parse_template(source).unwrap();
+        let ir = transform_ast(ast).unwrap();
+
+        let lua_code = generate_lua_code(ir, "test").unwrap();
+        println!("Generated Lua code:\n{}", lua_code);
+
+        // Two distinct handler functions
+        assert!(lua_code.contains("exports.__handlers[\"click_0\"]"));
+        assert!(lua_code.contains("exports.__handlers[\"click_1\"]"));
+        // Two distinct EV markers
+        assert!(lua_code.contains("<!--l:EV(click_0)-->"));
+        assert!(lua_code.contains("<!--l:EV(click_1)-->"));
+    }
+
+    #[cfg(feature = "client-markers")]
+    #[test]
+    fn test_event_no_onclick_attribute() {
+        let source = r#"<button on:click={doIt}>Go</button>"#;
+        let ast = parse_template(source).unwrap();
+        let ir = transform_ast(ast).unwrap();
+
+        let lua_code = generate_lua_code(ir, "test").unwrap();
+
+        // Should not produce on:click as an HTML attribute
+        assert!(!lua_code.contains("on:click"));
+        // But with client-markers, the EV marker should be there
+        assert!(lua_code.contains("<!--l:EV("));
+    }
+
+    #[test]
+    fn test_event_on_component_becomes_prop() {
+        let source = r#"<Button on:click={handleClick}>Go</Button>"#;
+        let ast = parse_template(source).unwrap();
+        let ir = transform_ast(ast).unwrap();
+
+        let lua_code = generate_lua_code(ir, "test").unwrap();
+        println!("Generated Lua code:\n{}", lua_code);
+
+        // Event should be passed as on_click prop to the component
+        assert!(lua_code.contains("on_click"));
+        assert!(lua_code.contains("handleClick"));
+    }
+
+    #[cfg(feature = "client-markers")]
+    #[test]
+    fn test_exports_module_structure() {
+        let source = r#"<script>
+local count = $state(0)
+local doubled = $derived(count * 2)
+</script>
+<button on:click={count = count + 1}>{count}</button>"#;
+        let ast = parse_template(source).unwrap();
+        let ir = transform_ast(ast).unwrap();
+
+        let lua_code = generate_lua_code(ir, "test").unwrap();
+        println!("Generated Lua code:\n{}", lua_code);
+
+        // Module exports structure
+        assert!(lua_code.contains("local exports = {}"));
+        assert!(lua_code.contains("exports.render = render"));
+        assert!(lua_code.contains("exports.moduleName = \"test\""));
+        assert!(lua_code.contains("return exports"));
+        // State/derived defs
+        assert!(lua_code.contains("exports.state_defs"));
+        assert!(lua_code.contains("exports.derived_defs"));
+        // Handlers table
+        assert!(lua_code.contains("exports.__handlers = {}"));
+    }
+
+    #[cfg(feature = "client-markers")]
+    #[test]
+    fn test_combined_event_and_reactive_state() {
+        let source = r#"<script>
+local count = $state(0)
+</script>
+<button on:click={count = count + 1} class={count > 0 and "active" or ""}>
+    {count}
+</button>"#;
+        let ast = parse_template(source).unwrap();
+        let ir = transform_ast(ast).unwrap();
+
+        let lua_code = generate_lua_code(ir, "test").unwrap();
+        println!("Generated Lua code:\n{}", lua_code);
+
+        // EV marker for the click handler
+        assert!(lua_code.contains("<!--l:EV(click_0)-->"));
+        // TB marker for the template
+        assert!(lua_code.contains("<!--l:TB(test)-->"));
+        // Runtime API calls for state
+        assert!(lua_code.contains("runtime.state(\"count\""));
+        // Handler function generated
+        assert!(lua_code.contains("exports.__handlers[\"click_0\"]"));
+        // No on:click attribute in HTML
+        assert!(!lua_code.contains("on:click"));
     }
 }

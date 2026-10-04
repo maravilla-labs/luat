@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "outDir": "public/js",
+    "rootDir": "assets/js",
+    "declaration": false,
+    "noEmit": true
+  },
+  "include": ["assets/js/**/*"],
+  "exclude": ["node_modules"]
+}

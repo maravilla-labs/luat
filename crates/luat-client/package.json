@@ -1,0 +1,38 @@
+{
+  "name": "@maravilla-labs/luat-client",
+  "version": "0.1.0",
+  "description": "Client-side reactive runtime for Luat templates (WASM)",
+  "type": "module",
+  "main": "./luat-client.js",
+  "module": "./luat-client.js",
+  "exports": {
+    ".": {
+      "import": "./luat-client.js",
+      "default": "./luat-client.js"
+    },
+    "./luat-client.js": "./luat-client.js"
+  },
+  "files": [
+    "luat-client.js",
+    "luat-client-wasm.mjs",
+    "luat_client.wasm"
+  ],
+  "scripts": {
+    "build": "cargo build --package luat-client --target wasm32-unknown-emscripten --release && npm run copy-artifacts",
+    "copy-artifacts": "cp ../../target/wasm32-unknown-emscripten/release/luat-client.js ./luat-client-wasm.mjs && cp ../../target/wasm32-unknown-emscripten/release/luat_client.wasm .",
+    "test": "npm run build && node test.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/maravilla-labs/luat"
+  },
+  "keywords": [
+    "luat",
+    "reactive",
+    "wasm",
+    "lua",
+    "client",
+    "svelte"
+  ],
+  "license": "MIT OR Apache-2.0"
+}

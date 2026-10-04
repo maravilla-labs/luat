@@ -138,9 +138,10 @@ boolean_attr = { attr_name ~ !(ws* ~ "=") } // Ensures no '=' follows for boolea
 regular_attr = { attr_name ~ ws* ~ "=" ~ ws* ~ attr_value }
 
 // Enhanced attribute name to support framework prefixes (x-, @, :, v-, etc.)
-attr_name = { 
-    (('a'..'z' | 'A'..'Z' | "@" | ":" | "v-" | "x-" | "data-" | "aria-") ~ 
-    ('a'..'z' | 'A'..'Z' | '0'..'9' | "_" | "-" | ":" | "." | "?" | "@" | "[" | "]" | "(" | ")" | "*")*) 
+// The "|" character supports event modifiers: on:click|preventDefault
+attr_name = {
+    (('a'..'z' | 'A'..'Z' | "@" | ":" | "v-" | "x-" | "data-" | "aria-") ~
+    ('a'..'z' | 'A'..'Z' | '0'..'9' | "_" | "-" | ":" | "." | "?" | "@" | "[" | "]" | "(" | ")" | "*" | "|")*)
 }
 
 attr_value = { raw_html | quoted_string | mustache_attr  | unquoted_value }

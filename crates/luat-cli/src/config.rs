@@ -53,6 +53,38 @@ pub struct Config {
     /// Routing configuration.
     #[serde(default)]
     pub routing: RoutingConfig,
+    /// Rendering mode configuration (SSR, hybrid, SPA).
+    #[serde(default)]
+    pub rendering: RenderingConfig,
+}
+
+/// Rendering mode for the application.
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum RenderingMode {
+    /// Pure server rendering. HTMX/Alpine for interactivity. No WASM. Current behavior.
+    #[default]
+    Ssr,
+    /// SSR first paint + WASM takeover. Markers emitted. Client bundle built.
+    Hybrid,
+    /// Pure client-side. No server rendering. WASM renders everything.
+    Spa,
+}
+
+/// Rendering configuration controlling SSR/client-side behavior.
+#[derive(Debug, Deserialize, Clone)]
+pub struct RenderingConfig {
+    /// Rendering mode: "ssr" (default), "hybrid", or "spa".
+    #[serde(default)]
+    pub mode: RenderingMode,
+}
+
+impl Default for RenderingConfig {
+    fn default() -> Self {
+        Self {
+            mode: RenderingMode::Ssr,
+        }
+    }
 }
 
 /// Routing configuration for file-based routing.
@@ -226,6 +258,7 @@ impl Config {
                 build: BuildConfig::default(),
                 frontend: ToolchainConfig::default(),
                 routing: RoutingConfig::default(),
+                rendering: RenderingConfig::default(),
             });
         }
 
