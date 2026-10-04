@@ -870,7 +870,7 @@ impl<R: ResourceResolver> Engine<R> {
     /// ```
     pub fn render(&self, module: &Module, context: &Value) -> Result<String> {
         let (render_func, runtime) = self.prepare_render(module, None)?;
-        let result = render_func.call::<String>((self.lua.to_value(context)?, &runtime));
+        let result = render_func.call::<String>((self.convert(context)?, &runtime));
         result.map_err(|e| Self::translate_render_error(module, e))
     }
 
@@ -894,7 +894,7 @@ impl<R: ResourceResolver> Engine<R> {
     ) -> Result<String> {
         let (render_func, runtime) = self.prepare_render(module, request_runtime)?;
         let result = render_func
-            .call_async::<String>((self.lua.to_value(context)?, &runtime))
+            .call_async::<String>((self.convert(context)?, &runtime))
             .await;
         result.map_err(|e| Self::translate_render_error(module, e))
     }
@@ -903,7 +903,7 @@ impl<R: ResourceResolver> Engine<R> {
     /// its templates.
     pub(crate) fn render_in(&self, module: &Module, context: &Value, request_runtime: &Table) -> Result<String> {
         let (render_func, runtime) = self.prepare_render(module, Some(request_runtime))?;
-        let result = render_func.call::<String>((self.lua.to_value(context)?, &runtime));
+        let result = render_func.call::<String>((self.convert(context)?, &runtime));
         result.map_err(|e| Self::translate_render_error(module, e))
     }
 
@@ -1152,8 +1152,17 @@ impl<R: ResourceResolver> Engine<R> {
     ///     "items": ["one", "two", "three"]
     /// }))?;
     /// ```
+    ///
+    /// JSON `null` (and `None`, `()`) becomes `nil`, as in `json_to_lua`, so
+    /// templates can test absent and null fields alike with `x or default`.
     pub fn to_value<T: serde::Serialize>(&self, value: T) -> Result<Value> {
-        self.lua.to_value(&value).map_err(LuatError::LuaError)
+        self.convert(&value)
+    }
+
+    fn convert<T: serde::Serialize + ?Sized>(&self, value: &T) -> Result<Value> {
+        self.lua
+            .to_value_with(value, crate::extensions::json::null_as_nil())
+            .map_err(LuatError::LuaError)
     }
 
     /// Converts a serializable value into a wrapped Lua context value.
@@ -1161,10 +1170,7 @@ impl<R: ResourceResolver> Engine<R> {
     /// Similar to [`to_value`](Self::to_value) but returns a
     /// [`LuatContextValue`] wrapper for specific use cases.
     pub fn create_context_value<T: serde::Serialize>(&self, value: T) -> Result<LuatContextValue> {
-        match self.lua.to_value(&value) {
-            Ok(val) => Ok(LuatContextValue(val)),
-            Err(e) => Err(LuatError::LuaError(e)),
-        }
+        self.convert(&value).map(LuatContextValue)
     }
 
     /// Compiles Lua code into bytecode for distribution.

@@ -54,3 +54,24 @@ requires, and modules inside installed packages.
 `luat build` resolves every literal `require("...")` ahead of time and
 warns about those it cannot resolve. Requires inside Lua comments
 (`-- require("x")`, `--[[ ... ]]`, `--[==[ ... ]==]`) are skipped.
+
+## `$` in script strings
+
+A `$name(...)` in Lua code inside `<script>` is reserved for the
+reactivity helpers (`$state`, `$derived`). Inside a string or a comment it
+is plain text, so client-side expressions keep their `$`:
+
+```luat
+<script>
+local init = "$nextTick(() => $refs.input.focus())"
+</script>
+<div x-init={init}>...</div>
+```
+
+## JSON `null` in props
+
+Data that reaches a template as JSON (load results, action data, context
+built with `Engine::to_value`) and `json.decode` turn `null` into `nil`.
+An absent field and a `null` field read alike, so `props.title or ""`
+covers both. In an array a `null` leaves a hole at its position; the other
+elements keep their indices.

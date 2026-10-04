@@ -8,6 +8,15 @@
 
 use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 
+/// Serialization options that turn JSON `null` into `nil` rather than
+/// mlua's light-userdata `NULL`, which is truthy and so slips past
+/// `x or default`.
+pub fn null_as_nil() -> mlua::SerializeOptions {
+    mlua::SerializeOptions::new()
+        .serialize_none_to_null(false)
+        .serialize_unit_to_null(false)
+}
+
 /// Register the json module as a global on the given Lua instance.
 ///
 /// This makes `json.encode()`, `json.decode()`, `json.encode_pretty()`,
@@ -46,7 +55,7 @@ pub fn register_json_module(lua: &Lua) -> LuaResult<()> {
     // 3. JSON Decode function (JSON string -> Lua table)
     let decode = lua.create_function(|lua, json_str: String| {
         match serde_json::from_str::<serde_json::Value>(&json_str) {
-            Ok(json_value) => lua.to_value(&json_value),
+            Ok(json_value) => lua.to_value_with(&json_value, null_as_nil()),
             Err(err) => Err(mlua::Error::external(format!("JSON decode error: {}", err))),
         }
     })?;
@@ -86,7 +95,7 @@ pub fn register_json_module(lua: &Lua) -> LuaResult<()> {
 
         let decode = lua.create_function(|lua, json_str: String| {
             match serde_json::from_str::<serde_json::Value>(&json_str) {
-                Ok(json_value) => lua.to_value(&json_value),
+                Ok(json_value) => lua.to_value_with(&json_value, null_as_nil()),
                 Err(err) => Err(mlua::Error::external(format!("JSON decode error: {}", err))),
             }
         })?;

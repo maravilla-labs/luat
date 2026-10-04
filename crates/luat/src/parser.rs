@@ -346,39 +346,87 @@ fn extract_script_content(script_pair: pest::iterators::Pair<Rule>) -> Result<St
 }
 
 /// Parse a Lua script that may contain LUAT magic functions like $state() and $derived()
+///
+/// Only code is rewritten: a `$name(...)` inside a string literal or a comment
+/// is text (an Alpine `$nextTick(...)` in an attribute string, say) and stays
+/// as written.
 fn parse_lua_script_with_magic(content: &str) -> Result<String> {
-    // We need to create a mock Lua file to parse as a full script
-    // This is because the magic functions might be inside larger expressions or statements
-    let mut output = String::new();
-    let mut remaining = content;
-
-    // Use regex to find all magic function occurrences
     let magic_function_regex =
-        regex::Regex::new(r"\$([a-zA-Z_][a-zA-Z0-9_]*)\s*\(([^)]*)\)").unwrap();
+        regex::Regex::new(r"^\$([a-zA-Z_][a-zA-Z0-9_]*)\s*\(([^)]*)\)").unwrap();
 
-    while let Some(captures) = magic_function_regex.captures(remaining) {
-        let full_match = captures.get(0).unwrap();
-        let function_name = captures.get(1).unwrap().as_str();
-        let args_text = captures.get(2).unwrap().as_str();
+    let mut output = String::with_capacity(content.len());
+    let bytes = content.as_bytes();
+    let mut copied = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'-' if bytes.get(i + 1) == Some(&b'-') => {
+                i = match long_bracket_level(bytes, i + 2) {
+                    Some(level) => skip_long_bracket(bytes, i + 2, level),
+                    None => content[i..].find('\n').map_or(bytes.len(), |n| i + n),
+                };
+            }
+            b'"' | b'\'' => i = skip_quoted(bytes, i),
+            b'[' => {
+                i = match long_bracket_level(bytes, i) {
+                    Some(level) => skip_long_bracket(bytes, i, level),
+                    None => i + 1,
+                };
+            }
+            b'$' => {
+                let Some(captures) = magic_function_regex.captures(&content[i..]) else {
+                    i += 1;
+                    continue;
+                };
+                let full_match = captures.get(0).unwrap();
+                let function_name = captures.get(1).unwrap().as_str();
+                let args = parse_magic_function_args(captures.get(2).unwrap().as_str());
 
-        // Add content before the magic function to the output
-        output.push_str(&remaining[..full_match.start()]);
-
-        // Parse the arguments
-        let args = parse_magic_function_args(args_text);
-
-        // Create a LuatMagicFunction and get its Lua representation
-        let magic_function = create_magic_function(function_name, args);
-        output.push_str(&magic_function.to_lua());
-
-        // Move to the next part of the content (slice reference, no allocation)
-        remaining = &remaining[full_match.end()..];
+                output.push_str(&content[copied..i]);
+                output.push_str(&create_magic_function(function_name, args).to_lua());
+                i += full_match.end();
+                copied = i;
+            }
+            _ => i += 1,
+        }
     }
-
-    // Add any remaining content
-    output.push_str(remaining);
+    output.push_str(&content[copied..]);
 
     Ok(output)
+}
+
+/// The level of a Lua long bracket (`[[`, `[==[`) opening at `at`, if any.
+fn long_bracket_level(bytes: &[u8], at: usize) -> Option<usize> {
+    if bytes.get(at) != Some(&b'[') {
+        return None;
+    }
+    let level = bytes[at + 1..].iter().take_while(|&&b| b == b'=').count();
+    (bytes.get(at + 1 + level) == Some(&b'[')).then_some(level)
+}
+
+/// The index just past the long bracket of `level` opening at `at`.
+fn skip_long_bracket(bytes: &[u8], at: usize, level: usize) -> usize {
+    let close = format!("]{}]", "=".repeat(level));
+    let body = at + level + 2;
+    bytes[body..]
+        .windows(close.len())
+        .position(|w| w == close.as_bytes())
+        .map_or(bytes.len(), |n| body + n + close.len())
+}
+
+/// The index just past the quoted string opening at `at`.
+fn skip_quoted(bytes: &[u8], at: usize) -> usize {
+    let quote = bytes[at];
+    let mut i = at + 1;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => i += 2,
+            b if b == quote => return i + 1,
+            b'\n' => return i,
+            _ => i += 1,
+        }
+    }
+    bytes.len()
 }
 
 /// Parse the arguments of a magic function into a vector of expressions
