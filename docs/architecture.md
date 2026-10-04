@@ -46,6 +46,8 @@ This document describes the high-level architecture of Luat. The core idea: the 
   - `__require_map`: optional pre-resolved require map (non-literal requires are warnings).
 - **Require resolution**:
   - Same rules in dev and production, including `$lib/` and `lib/` aliases.
+  - Names are case-exact on every filesystem: the resolver checks the directory entries on disk, so a case-insensitive filesystem cannot make `require("./x")` load `X.luat` (see [templates.md](templates.md)).
+  - Requires inside Lua comments are not dependencies.
   - Production `require` uses bundled module loaders and `__server_sources`.
 
 ## Adapters

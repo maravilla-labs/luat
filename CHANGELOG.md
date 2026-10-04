@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `ctx.setHeader(name, value)` and `ctx.appendHeader(name, value)` set
+  response headers from `load` functions, API handlers and actions.
+- `ctx.setStatus(code)` sets a page's status from `load`; a `status`
+  returned from `load` without `redirect` now does the same.
+- `ctx.path`, `ctx.search` and `ctx.href`; `LuatRequest::with_raw_query`.
+- `partitioned = true` cookie option.
+
+### Changed
+- Dynamic attributes whose value is `nil` or `false` are omitted; `true`
+  renders a bare attribute. Spreads follow the same rules.
+- Module names resolve case-exactly on case-insensitive filesystems.
+- `setCookie` rejects `sameSite = "None"` and `partitioned` without
+  `secure = true`.
+- `luat build` ignores `require` calls inside Lua comments.
+
 ## [0.1.0] - 2025-01-12
 
 ### Added

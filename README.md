@@ -99,6 +99,10 @@ format, the lockfile and the registry protocol.
 - [Getting Started](https://luat.maravillalabs.com/docs/getting-started)
 - [Template Syntax](https://luat.maravillalabs.com/docs/templating/syntax)
 - [Project Structure](https://luat.maravillalabs.com/docs/application/structure)
+- [Server code and the request context](docs/server.md): `ctx.path` /
+  `ctx.search` / `ctx.href`, response headers (`ctx.setHeader`), status
+  (`ctx.setStatus`) and cookies
+- [Attribute values and module names](docs/templates.md)
 
 ## Editor Support
 
