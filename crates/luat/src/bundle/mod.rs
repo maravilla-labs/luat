@@ -133,6 +133,17 @@ impl Bundle {
         engine.preload_bundle_code(&self.source)?;
         App::from_loaded(engine)
     }
+
+    /// Like [`instantiate`](Self::instantiate), with `limits` in force
+    /// before any of the bundle's code runs. Use this for bundles you did
+    /// not build yourself: loading a bundle executes its top-level code.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn instantiate_with_limits(&self, limits: &crate::limits::EngineLimits) -> Result<App> {
+        let engine = new_engine()?;
+        engine.set_limits(limits)?;
+        engine.preload_bundle_code(&self.source)?;
+        App::from_loaded(engine)
+    }
 }
 
 /// An app ready to handle requests: an engine with a bundle loaded, its
@@ -150,6 +161,16 @@ impl App {
     /// Creates a fresh engine from bytecode produced by [`Bundle::compile`].
     pub fn from_bytecode(bytecode: &[u8]) -> Result<Self> {
         let engine = new_engine()?;
+        engine.preload_bundle_code_from_binary(bytecode)?;
+        Self::from_loaded(engine)
+    }
+
+    /// Like [`from_bytecode`](Self::from_bytecode), with `limits` in force
+    /// before any of the bundle's code runs.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn from_bytecode_with_limits(bytecode: &[u8], limits: &crate::limits::EngineLimits) -> Result<Self> {
+        let engine = new_engine()?;
+        engine.set_limits(limits)?;
         engine.preload_bundle_code_from_binary(bytecode)?;
         Self::from_loaded(engine)
     }

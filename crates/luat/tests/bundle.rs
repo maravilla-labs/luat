@@ -126,3 +126,22 @@ fn unresolved_requires_are_reported() {
         output.warnings
     );
 }
+
+#[test]
+fn limits_apply_to_bundle_top_level_code() {
+    use luat::{EngineLimits, LimitExceeded};
+
+    let header = format!("-- luat-bundle abi={} luat={}", luat::BUNDLE_ABI, luat::bundle::LUAT_VERSION);
+    let bundle = Bundle::from_source(format!("{header}\nwhile true do end")).unwrap();
+    let limits = EngineLimits {
+        instruction_budget: Some(100_000),
+        ..Default::default()
+    };
+
+    let err = bundle.instantiate_with_limits(&limits).err().unwrap();
+    assert_eq!(LimitExceeded::from_error(&err), Some(LimitExceeded::Instructions));
+
+    let bytecode = bundle.compile().unwrap();
+    let err = App::from_bytecode_with_limits(&bytecode, &limits).err().unwrap();
+    assert_eq!(LimitExceeded::from_error(&err), Some(LimitExceeded::Instructions));
+}
