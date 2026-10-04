@@ -125,6 +125,9 @@ pub struct FileSystemResolver {
     pub root_dir: String,
     /// The lib directory for $lib alias resolution.
     pub lib_dir: Option<String>,
+    /// Directory of installed packages (`.luat/packages`), for
+    /// `require("@scope/name/...")`.
+    pub packages_dir: Option<String>,
 }
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "filesystem"))]
@@ -134,7 +137,16 @@ impl FileSystemResolver {
         Self {
             root_dir: path_to_string(root_dir.as_ref()),
             lib_dir: None,
+            packages_dir: None,
         }
+    }
+
+    /// Sets the directory of installed packages, so that
+    /// `require("@scope/name")` and `require("@scope/name/Module")` resolve
+    /// to `<packages_dir>/@scope/name/src/...` (see [`crate::package_paths`]).
+    pub fn with_packages_dir<P: AsRef<Path>>(mut self, packages_dir: P) -> Self {
+        self.packages_dir = Some(path_to_string(packages_dir.as_ref()));
+        self
     }
 
     /// Sets the lib directory for `$lib` alias resolution.
@@ -194,6 +206,12 @@ impl FileSystemResolver {
     }
     
     fn resolve_internal(&self, importer_path: &str, module_name: &str) -> Result<(PathBuf, String)> {
+        if let Some(packages_dir) = &self.packages_dir {
+            if let Some(path) = crate::package_paths::resolve_package_module(Path::new(packages_dir), module_name)? {
+                let path_str = path_to_string(&path);
+                return Ok((path, path_str));
+            }
+        }
         let (expanded_module_name, alias_absolute) = self.expand_aliases(module_name);
         let module_name = expanded_module_name.as_str();
 
@@ -347,7 +365,15 @@ impl FileSystemResolver {
                     false
                 };
 
-                if !in_root && !in_lib {
+                // Files of installed packages (relative requires inside a
+                // package resolve here).
+                let in_packages = self
+                    .packages_dir
+                    .as_ref()
+                    .and_then(|dir| fs::canonicalize(dir).ok())
+                    .is_some_and(|dir| canonical_path.starts_with(dir));
+
+                if !in_root && !in_lib && !in_packages {
                     return Err(LuatError::ResolutionError(
                         format!("Security: Path '{}' escapes allowed directories", module_name)
                     ));

@@ -29,7 +29,7 @@ pub struct ModuleDir {
 }
 
 /// What to build.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct BuildOptions {
     /// Directory with `+page.luat`, `+server.lua`, … files.
     pub routes_dir: PathBuf,
@@ -43,6 +43,15 @@ pub struct BuildOptions {
     /// Requires of these names are left to the host instead of being
     /// resolved (and warned about) at build time.
     pub host_modules: Vec<String>,
+    /// Directory of installed packages (by convention
+    /// `<project>/.luat/packages`, holding `@scope/name/` package roots).
+    ///
+    /// When set, every installed package's `src/` is compiled into the
+    /// bundle under the module key `@scope/name/<path inside src>`, and
+    /// `require("@scope/name")` / `require("@scope/name/Card")` resolve as
+    /// described in [`crate::package_paths`], so the bundle needs no
+    /// packages directory at runtime.
+    pub packages_dir: Option<PathBuf>,
 }
 
 /// The result of a build.
@@ -85,6 +94,9 @@ pub fn build(options: &BuildOptions, progress: impl FnMut(usize, usize)) -> Resu
     if let Some(lib_dir) = &options.lib_dir {
         resolver = resolver.with_lib_dir(lib_dir);
     }
+    if let Some(packages_dir) = &options.packages_dir {
+        resolver = resolver.with_packages_dir(packages_dir);
+    }
     let engine = Engine::with_memory_cache(resolver, 100)?;
 
     let mut files = collect(&options.routes_dir, "")?;
@@ -93,6 +105,11 @@ pub fn build(options: &BuildOptions, progress: impl FnMut(usize, usize)) -> Resu
     }
     for module_dir in &options.module_dirs {
         files.extend(collect(&module_dir.dir, &module_dir.prefix)?);
+    }
+    if let Some(packages_dir) = &options.packages_dir {
+        for (package, root) in installed_packages(packages_dir)? {
+            files.extend(collect(&root.join("src"), &package)?);
+        }
     }
 
     let mut warnings = Vec::new();
@@ -165,6 +182,32 @@ fn collect(dir: &Path, prefix: &str) -> Result<Vec<SourceFile>> {
             })
         })
         .collect()
+}
+
+/// Installed packages under `packages_dir`: `(@scope/name, package root)`,
+/// sorted. Entries that are not valid package names are skipped.
+fn installed_packages(packages_dir: &Path) -> Result<Vec<(String, PathBuf)>> {
+    let mut packages = Vec::new();
+    if !packages_dir.is_dir() {
+        return Ok(packages);
+    }
+    for scope in fs::read_dir(packages_dir)? {
+        let scope = scope?;
+        let scope_name = scope.file_name().to_string_lossy().into_owned();
+        let Some(scope_part) = scope_name.strip_prefix('@') else { continue };
+        if !crate::package_paths::is_valid_name_part(scope_part) || !scope.file_type()?.is_dir() {
+            continue;
+        }
+        for package in fs::read_dir(scope.path())? {
+            let package = package?;
+            let name = package.file_name().to_string_lossy().into_owned();
+            if crate::package_paths::is_valid_name_part(&name) && package.file_type()?.is_dir() {
+                packages.push((format!("{scope_name}/{name}"), package.path()));
+            }
+        }
+    }
+    packages.sort();
+    Ok(packages)
 }
 
 /// Resolves every literal `require("...")` at build time, so bundles do not

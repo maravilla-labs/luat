@@ -983,6 +983,30 @@ where
     bundle.push_str("      end\n");
     bundle.push_str("    end\n");
     bundle.push_str("  end\n");
+    // Package modules (`@scope/name[/path]`) are bundled under
+    // `@scope/name/<path inside src>`; resolve them by the package rules
+    // only, never by the relative/basename fallbacks below.
+    bundle.push_str("  if string.sub(name, 1, 1) == \"@\" then\n");
+    bundle.push_str("    local package, sub = string.match(name, \"^(@[^/]+/[^/]+)/?(.*)$\")\n");
+    bundle.push_str("    if package then\n");
+    bundle.push_str("      local keys = {}\n");
+    bundle.push_str("      if sub == \"\" then\n");
+    bundle.push_str("        keys = { package .. \"/init.lua\", package .. \"/init.luat\" }\n");
+    bundle.push_str("      else\n");
+    bundle.push_str("        local base = package .. \"/\" .. sub\n");
+    bundle.push_str("        if string.match(sub, \"%.luat?$\") then table.insert(keys, base) end\n");
+    bundle.push_str("        table.insert(keys, base .. \".luat\")\n");
+    bundle.push_str("        table.insert(keys, base .. \".lua\")\n");
+    bundle.push_str("        table.insert(keys, base .. \"/init.lua\")\n");
+    bundle.push_str("      end\n");
+    bundle.push_str("      for _, key in ipairs(keys) do\n");
+    bundle.push_str("        if __modules[key] ~= nil then return \"module\", key end\n");
+    bundle.push_str("        if __module_loaders[key] ~= nil then return \"loader\", key end\n");
+    bundle.push_str("        if __server_sources and __server_sources[key] ~= nil then return \"server\", key end\n");
+    bundle.push_str("      end\n");
+    bundle.push_str("      return nil\n");
+    bundle.push_str("    end\n");
+    bundle.push_str("  end\n");
     bundle.push_str("  local candidates = {}\n");
     bundle.push_str("  local expanded = __expand_alias(name)\n");
     bundle.push_str("  local base_dir = \"\"\n");

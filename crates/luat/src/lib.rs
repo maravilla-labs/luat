@@ -92,6 +92,9 @@ pub mod runtime;
 
 mod scoped_require;
 
+/// Where `require("@scope/name/...")` finds installed packages.
+pub mod package_paths;
+
 mod patterns;
 
 #[cfg(not(target_arch = "wasm32"))]

@@ -56,6 +56,7 @@ fn project() -> (tempfile::TempDir, BuildOptions) {
             dir: dir.path().join("jobs"),
         }],
         host_modules: vec!["myhost".to_string()],
+        packages_dir: None,
     };
     (dir, options)
 }
