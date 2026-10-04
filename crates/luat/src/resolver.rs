@@ -249,13 +249,12 @@ impl FileSystemResolver {
         }
 
         let module_as_path = Path::new(module_name);
-        let mut full_path = if module_as_path.is_absolute() {
-            // Absolute path - use directly for alias paths, otherwise treat as root-relative
-            if alias_absolute {
-                module_as_path.to_path_buf()
-            } else {
-                root_dir_path.join(module_as_path.strip_prefix("/").unwrap_or(module_as_path))
-            }
+        let mut full_path = if alias_absolute {
+            // An expanded alias (`$lib/…`) names one file, also when the lib
+            // directory is given relative to the working directory.
+            module_as_path.to_path_buf()
+        } else if module_as_path.is_absolute() {
+            root_dir_path.join(module_as_path.strip_prefix("/").unwrap_or(module_as_path))
         } else if module_name.starts_with("./") || module_name.starts_with("../") {
             // Explicit relative path - resolve from the base path
             base_path.join(module_as_path)
@@ -299,8 +298,9 @@ impl FileSystemResolver {
                 }
             }
             
-            // If still not found, check if it's a component name only
-            if resolved_path_option.is_none() {
+            // If still not found, check if it's a component name only. Never
+            // for an alias: `$lib/a/lade/Card` must not load `a/Card.luat`.
+            if resolved_path_option.is_none() && !alias_absolute {
                 // Try component name only from both root and base paths
                 let basename = module_as_path.file_name()
                     .and_then(|f| f.to_str())

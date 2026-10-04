@@ -134,3 +134,35 @@ fn package_modules_need_exact_case() {
     assert!(found("@acme/ui/forms/Field"));
     assert!(!found("@acme/ui/Forms/Field"));
 }
+
+/// `$lib/blocks/loaders/Card` next to `$lib/blocks/Card.luat`: with the lib
+/// directory given relative to the working directory, the alias used to miss
+/// and fall back to the bare name `Card`, loading the component instead of
+/// the module.
+#[test]
+fn lib_alias_does_not_fall_back_to_a_same_named_file() {
+    let dir = tempfile::tempdir_in(".").unwrap();
+    let rel = Path::new(".").join(dir.path().file_name().unwrap());
+    write(
+        &rel,
+        &[
+            ("src/routes/+page.luat", "<p/>"),
+            ("src/lib/blocks/Card.luat", "<p>component</p>"),
+            ("src/lib/blocks/registry.lua", "return {}"),
+            ("src/lib/blocks/loaders/Card.lua", "return {}"),
+        ],
+    );
+    let resolver = FileSystemResolver::new(rel.join("src/routes")).with_lib_dir(rel.join("src/lib"));
+    let importer = rel.join("src/lib/blocks/registry.lua");
+    let resolved = resolver
+        .get_resolved_path(&importer.to_string_lossy(), "$lib/blocks/loaders/Card")
+        .unwrap();
+    assert!(resolved.ends_with("blocks/loaders/Card.lua"), "{resolved}");
+    let resolved = resolver
+        .get_resolved_path(&importer.to_string_lossy(), "$lib/blocks/Card")
+        .unwrap();
+    assert!(resolved.ends_with("blocks/Card.luat"), "{resolved}");
+    assert!(resolver
+        .get_resolved_path(&importer.to_string_lossy(), "$lib/blocks/loaders/Missing")
+        .is_err());
+}
