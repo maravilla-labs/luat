@@ -74,6 +74,26 @@ luat dev
 
 For the full syntax guide, see the [documentation](https://luat.maravillalabs.com/docs/templating/syntax). There's also a [live playground](https://luat.maravillalabs.com/playground) to try Luat in your browser.
 
+## Packages
+
+Share components, layouts and Lua modules between projects as scoped
+packages:
+
+```bash
+luat add @acme/ui          # add, resolve, install, write luat.lock
+luat install --frozen      # exactly what luat.lock says (CI)
+luat publish               # from a package directory
+```
+
+```lua
+local Card = require("@acme/ui/Card")
+```
+
+Packages install into `.luat/packages` and are compiled into bundles by
+`luat build`. Local packages can be used with `{ path = "../ui" }`
+dependencies. See [docs/packages.md](docs/packages.md) for the package
+format, the lockfile and the registry protocol.
+
 ## Documentation
 
 - [Getting Started](https://luat.maravillalabs.com/docs/getting-started)
