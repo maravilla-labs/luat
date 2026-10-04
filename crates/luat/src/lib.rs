@@ -95,6 +95,8 @@ mod scoped_require;
 /// Where `require("@scope/name/...")` finds installed packages.
 pub mod package_paths;
 pub(crate) mod lua_comments;
+#[cfg(all(not(target_arch = "wasm32"), feature = "filesystem"))]
+pub(crate) mod fs_case;
 
 /// Luat packages: manifests, tarballs, the registry client, dependency
 /// resolution and installation.

@@ -92,7 +92,7 @@ pub fn resolve_package_module(
         LuatError::ResolutionError(format!("'{require_name}' is not a valid package module name"))
     })?;
     let package_root = packages_dir.join(package);
-    if !package_root.is_dir() {
+    if !package_root.is_dir() || !crate::fs_case::exists_exact(&package_root, 2) {
         return Err(LuatError::ResolutionError(format!(
             "package '{package}' is not installed (required as '{require_name}'); run `luat install`"
         )));
@@ -111,7 +111,9 @@ pub fn resolve_package_module(
     }
     for candidate in package_module_candidates(subpath) {
         let path = package_root.join(&candidate);
-        if !path.is_file() {
+        // Exact case for every component inside the package, so a package
+        // resolves the same on case-insensitive filesystems as on Linux.
+        if !crate::fs_case::is_file_exact(&path, candidate.split('/').count()) {
             continue;
         }
         let canonical = std::fs::canonicalize(&path).map_err(LuatError::IoError)?;

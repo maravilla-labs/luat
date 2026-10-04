@@ -212,6 +212,15 @@ impl FileSystemResolver {
                 return Ok((path, path_str));
             }
         }
+        // Trailing path components that come from the module name; only
+        // those are checked for exact case (see `fs_case`).
+        let depth = crate::fs_case::module_depth(
+            module_name
+                .strip_prefix("$lib/")
+                .or_else(|| self.lib_dir.as_ref().and(module_name.strip_prefix("lib/")))
+                .unwrap_or(module_name),
+        );
+        let exists = |path: &Path, depth: usize| crate::fs_case::exists_exact(path, depth);
         let (expanded_module_name, alias_absolute) = self.expand_aliases(module_name);
         let module_name = expanded_module_name.as_str();
 
@@ -253,7 +262,7 @@ impl FileSystemResolver {
         } else {
             // Implicit relative path - try base path first, then root path
             let base_resolved = base_path.join(module_as_path);
-            if base_resolved.exists() {
+            if exists(&base_resolved, depth) {
                 base_resolved
             } else {
                 root_dir_path.join(module_as_path)
@@ -261,7 +270,7 @@ impl FileSystemResolver {
         };
 
         // If a relative path resolves under routes/lib, remap to lib_dir when configured
-        if !full_path.exists() {
+        if !exists(&full_path, depth) {
             if let Some(ref lib_dir) = self.lib_dir {
                 let lib_alias_root = root_dir_path.join("lib");
                 let normalized = normalize_path_buf(&full_path);
@@ -278,13 +287,13 @@ impl FileSystemResolver {
         let mut resolved_path_option = None;
 
         // Check if the path exists with its current extension
-        if full_path.extension().is_some() && full_path.exists() {
+        if full_path.extension().is_some() && exists(&full_path, depth) {
             resolved_path_option = Some(full_path.clone());
         } else {
             // Try with our supported extensions
             for ext in &extensions {
                 let path_with_ext = full_path.with_extension(ext);
-                if path_with_ext.exists() {
+                if exists(&path_with_ext, depth) {
                     resolved_path_option = Some(path_with_ext);
                     break;
                 }
@@ -300,7 +309,7 @@ impl FileSystemResolver {
                 for ext in &extensions {
                     // Try from base path first
                     let basename_path = base_path.join(basename).with_extension(ext);
-                    if basename_path.exists() {
+                    if exists(&basename_path, 1) {
                         resolved_path_option = Some(basename_path);
                         break;
                     }
@@ -308,7 +317,7 @@ impl FileSystemResolver {
                     // Try from root path if different from base
                     if base_path != root_dir_path {
                         let root_basename_path = root_dir_path.join(basename).with_extension(ext);
-                        if root_basename_path.exists() {
+                        if exists(&root_basename_path, 1) {
                             resolved_path_option = Some(root_basename_path);
                             break;
                         }
@@ -328,12 +337,12 @@ impl FileSystemResolver {
                     lib_root.join(module_as_path)
                 };
 
-                if lib_full_path.extension().is_some() && lib_full_path.exists() {
+                if lib_full_path.extension().is_some() && exists(&lib_full_path, depth) {
                     resolved_path_option = Some(lib_full_path.clone());
                 } else {
                     for ext in &extensions {
                         let path_with_ext = lib_full_path.with_extension(ext);
-                        if path_with_ext.exists() {
+                        if exists(&path_with_ext, depth) {
                             resolved_path_option = Some(path_with_ext);
                             break;
                         }
