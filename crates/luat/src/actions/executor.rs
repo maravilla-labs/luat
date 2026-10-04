@@ -221,7 +221,7 @@ impl<'lua> ActionExecutor<'lua> {
             cookies_table.set(k.as_str(), v.as_str())?;
         }
         table.set("cookies", cookies_table)?;
-        crate::ctx_helpers::install(self.lua, &table, &self.cookies)?;
+        crate::ctx_helpers::install(self.lua, &table, &self.cookies, crate::ctx_helpers::HandlerKind::Other)?;
 
         // Add metadata
         table.set("url", ctx.url.as_str())?;

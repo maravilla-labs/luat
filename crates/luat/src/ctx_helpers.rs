@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: MIT
 
 //! Request-scoped helpers shared by load functions, API handlers and form
-//! actions: `ctx.setCookie`, `ctx.deleteCookie` and `ctx.error`.
+//! actions: `ctx.setCookie`, `ctx.deleteCookie`, `ctx.setHeader`,
+//! `ctx.appendHeader`, `ctx.setStatus` and `ctx.error`.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -37,9 +38,19 @@ impl HttpError {
     }
 }
 
-/// `Set-Cookie` values collected while one request is handled.
+/// Response state collected while one request is handled: `Set-Cookie`
+/// values from `ctx.setCookie` / `ctx.deleteCookie`, headers from
+/// `ctx.setHeader` / `ctx.appendHeader`, and the status from
+/// `ctx.setStatus`.
 #[derive(Debug, Clone, Default)]
-pub struct CookieJar(Arc<Mutex<Vec<String>>>);
+pub struct CookieJar(Arc<Mutex<JarState>>);
+
+#[derive(Debug, Default)]
+struct JarState {
+    cookies: Vec<String>,
+    headers: Vec<(String, String)>,
+    status: Option<u16>,
+}
 
 impl CookieJar {
     /// Creates an empty jar.
@@ -47,20 +58,63 @@ impl CookieJar {
         Self::default()
     }
 
+    fn with_state<T>(&self, f: impl FnOnce(&mut JarState) -> T) -> Option<T> {
+        self.0.lock().ok().map(|mut state| f(&mut state))
+    }
+
     fn push(&self, header: String) {
-        if let Ok(mut cookies) = self.0.lock() {
-            cookies.push(header);
-        }
+        self.with_state(|s| s.cookies.push(header));
     }
 
     /// Returns the collected `Set-Cookie` header values.
     pub fn take(&self) -> Vec<String> {
-        self.0.lock().map(|mut c| std::mem::take(&mut *c)).unwrap_or_default()
+        self.with_state(|s| std::mem::take(&mut s.cookies)).unwrap_or_default()
+    }
+
+    /// Sets header `name` to `value`, replacing values set earlier for the
+    /// same name (ignoring case). The jar does not validate; the `ctx`
+    /// helpers check names and values before they get here.
+    pub fn set_header(&self, name: &str, value: &str) {
+        self.with_state(|s| {
+            s.headers.retain(|(k, _)| !k.eq_ignore_ascii_case(name));
+            s.headers.push((name.to_string(), value.to_string()));
+        });
+    }
+
+    /// Adds another value for header `name`, keeping earlier ones.
+    pub fn append_header(&self, name: &str, value: &str) {
+        self.with_state(|s| s.headers.push((name.to_string(), value.to_string())));
+    }
+
+    /// Returns the collected headers, in the order they were set.
+    pub fn take_headers(&self) -> Vec<(String, String)> {
+        self.with_state(|s| std::mem::take(&mut s.headers)).unwrap_or_default()
+    }
+
+    /// Sets the response status. Not validated here, like `set_header`.
+    pub fn set_status(&self, status: u16) {
+        self.with_state(|s| s.status = Some(status));
+    }
+
+    /// The status set with `ctx.setStatus` (or a load function's `status`),
+    /// if any.
+    pub fn status(&self) -> Option<u16> {
+        self.with_state(|s| s.status).flatten()
     }
 }
 
-/// Installs `setCookie`, `deleteCookie` and `error` on a request `ctx` table.
-pub(crate) fn install(lua: &Lua, ctx: &Table, jar: &CookieJar) -> LuaResult<()> {
+/// Which request handler a `ctx` table is built for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HandlerKind {
+    /// A page or layout `load` function: `ctx.setStatus` is available.
+    Load,
+    /// An API handler or form action: the returned `status` sets the status.
+    Other,
+}
+
+/// Installs `setCookie`, `deleteCookie`, `setHeader`, `appendHeader`,
+/// `setStatus` and `error` on a request `ctx` table.
+pub(crate) fn install(lua: &Lua, ctx: &Table, jar: &CookieJar, kind: HandlerKind) -> LuaResult<()> {
     let set_jar = jar.clone();
     ctx.set(
         "setCookie",
@@ -82,6 +136,41 @@ pub(crate) fn install(lua: &Lua, ctx: &Table, jar: &CookieJar) -> LuaResult<()> 
         })?,
     )?;
 
+    let header_jar = jar.clone();
+    ctx.set(
+        "setHeader",
+        lua.create_function(move |_, (name, value): (String, String)| {
+            validate_header("setHeader", &name, &value).map_err(mlua::Error::runtime)?;
+            header_jar.set_header(&name, &value);
+            Ok(())
+        })?,
+    )?;
+
+    let append_jar = jar.clone();
+    ctx.set(
+        "appendHeader",
+        lua.create_function(move |_, (name, value): (String, String)| {
+            validate_header("appendHeader", &name, &value).map_err(mlua::Error::runtime)?;
+            append_jar.append_header(&name, &value);
+            Ok(())
+        })?,
+    )?;
+
+    let status_jar = jar.clone();
+    ctx.set(
+        "setStatus",
+        lua.create_function(move |_, status: i64| {
+            if kind != HandlerKind::Load {
+                return Err(mlua::Error::runtime(
+                    "ctx.setStatus is only available in load functions; API handlers and actions return { status = ... }",
+                ));
+            }
+            let status = validate_status(status).map_err(mlua::Error::runtime)?;
+            status_jar.set_status(status);
+            Ok(())
+        })?,
+    )?;
+
     ctx.set(
         "error",
         lua.create_function(|_, (status, message): (u16, Option<String>)| -> LuaResult<()> {
@@ -97,6 +186,53 @@ pub(crate) fn install(lua: &Lua, ctx: &Table, jar: &CookieJar) -> LuaResult<()> 
     Ok(())
 }
 
+/// Headers handlers may not set with `ctx.setHeader`: cookies go through
+/// `ctx.setCookie`, redirects through `redirect`, and framing headers belong
+/// to the server.
+const RESERVED_HEADERS: &[&str] = &[
+    "set-cookie",
+    "location",
+    "content-length",
+    "transfer-encoding",
+    "connection",
+    "keep-alive",
+    "upgrade",
+    "trailer",
+];
+
+/// Checks a header set from guest code: the name must be an HTTP token and
+/// not reserved (see `RESERVED_HEADERS`, plus the engine's `x-luat-*`
+/// headers); the value must not contain control characters other than
+/// tab, which rules out CR/LF header injection.
+pub(crate) fn validate_header(func: &str, name: &str, value: &str) -> Result<(), String> {
+    if name.is_empty() || !name.bytes().all(is_token_byte) {
+        return Err(format!("ctx.{func}: invalid header name {name:?}"));
+    }
+    let lower = name.to_ascii_lowercase();
+    if lower == "set-cookie" {
+        return Err(format!("ctx.{func}: use ctx.setCookie to set cookies"));
+    }
+    if RESERVED_HEADERS.contains(&lower.as_str()) || lower.starts_with("x-luat-") {
+        return Err(format!("ctx.{func}: header {name:?} cannot be set by handlers"));
+    }
+    if value.bytes().any(|b| (b.is_ascii_control() && b != b'\t') || b == 0x7f) {
+        return Err(format!("ctx.{func}: invalid value for header {name:?}"));
+    }
+    Ok(())
+}
+
+/// Checks a status passed to `ctx.setStatus`: 200-299 or 400-599.
+/// Redirects use `redirect`, errors may also use `ctx.error`.
+pub(crate) fn validate_status(status: i64) -> Result<u16, String> {
+    match status {
+        200..=299 | 400..=599 => Ok(status as u16),
+        300..=399 => Err(format!(
+            "ctx.setStatus: {status} is a redirect status; return {{ redirect = url, status = {status} }} instead"
+        )),
+        _ => Err(format!("ctx.setStatus: status must be 200-299 or 400-599, got {status}")),
+    }
+}
+
 /// Attributes accepted by `ctx.setCookie` / `ctx.deleteCookie`.
 #[derive(Debug, Clone)]
 struct CookieOptions {
@@ -106,6 +242,7 @@ struct CookieOptions {
     secure: bool,
     http_only: bool,
     same_site: Option<String>,
+    partitioned: bool,
 }
 
 impl CookieOptions {
@@ -117,6 +254,7 @@ impl CookieOptions {
             secure: false,
             http_only: true,
             same_site: Some("Lax".to_string()),
+            partitioned: false,
         };
         let Some(t) = opts else { return Ok(o) };
         if let Some(path) = t.get::<Option<String>>("path")? {
@@ -129,6 +267,9 @@ impl CookieOptions {
         }
         if let Some(http_only) = t.get::<Option<bool>>("httpOnly")? {
             o.http_only = http_only;
+        }
+        if let Some(partitioned) = t.get::<Option<bool>>("partitioned")? {
+            o.partitioned = partitioned;
         }
         match t.get::<Value>("sameSite")? {
             Value::Nil => {}
@@ -172,13 +313,22 @@ fn serialize_cookie(name: &str, value: &str, o: &CookieOptions) -> Result<String
             "none" => "None",
             other => return Err(format!("setCookie: invalid sameSite {other:?}")),
         };
+        if same_site == "None" && !o.secure {
+            return Err("setCookie: sameSite = \"None\" requires secure = true".to_string());
+        }
         out.push_str(&format!("; SameSite={same_site}"));
+    }
+    if o.partitioned && !o.secure {
+        return Err("setCookie: partitioned cookies require secure = true".to_string());
     }
     if o.secure {
         out.push_str("; Secure");
     }
     if o.http_only {
         out.push_str("; HttpOnly");
+    }
+    if o.partitioned {
+        out.push_str("; Partitioned");
     }
     Ok(out)
 }
@@ -298,6 +448,68 @@ mod tests {
         o = defaults();
         o.same_site = Some("sometimes".to_string());
         assert!(serialize_cookie("a", "v", &o).is_err());
+    }
+
+    #[test]
+    fn partitioned_cookies_need_secure() {
+        let mut o = defaults();
+        o.partitioned = true;
+        assert!(serialize_cookie("a", "v", &o).is_err());
+        o.secure = true;
+        o.same_site = Some("none".to_string());
+        assert_eq!(
+            serialize_cookie("a", "v", &o).unwrap(),
+            "a=v; Path=/; SameSite=None; Secure; HttpOnly; Partitioned"
+        );
+    }
+
+    #[test]
+    fn same_site_none_needs_secure() {
+        let mut o = defaults();
+        o.same_site = Some("None".to_string());
+        assert!(serialize_cookie("a", "v", &o).is_err());
+        o.secure = true;
+        assert!(serialize_cookie("a", "v", &o).is_ok());
+    }
+
+    #[test]
+    fn header_validation() {
+        assert!(validate_header("setHeader", "Cache-Control", "public, max-age=60").is_ok());
+        assert!(validate_header("setHeader", "X-Tab", "a\tb").is_ok());
+        assert!(validate_header("setHeader", "X-Evil", "a\r\nSet-Cookie: x=1").is_err());
+        assert!(validate_header("setHeader", "X-Evil", "a\nb").is_err());
+        assert!(validate_header("setHeader", "X-Bad\r\nName", "v").is_err());
+        assert!(validate_header("setHeader", "Bad Name", "v").is_err());
+        assert!(validate_header("setHeader", "", "v").is_err());
+        assert!(validate_header("setHeader", "Set-Cookie", "a=1").is_err());
+        assert!(validate_header("setHeader", "content-length", "1").is_err());
+        assert!(validate_header("setHeader", "X-Luat-Title", "t").is_err());
+    }
+
+    #[test]
+    fn status_validation() {
+        assert_eq!(validate_status(404), Ok(404));
+        assert_eq!(validate_status(203), Ok(203));
+        assert!(validate_status(301).is_err());
+        assert!(validate_status(100).is_err());
+        assert!(validate_status(600).is_err());
+    }
+
+    #[test]
+    fn jar_set_header_replaces_and_append_keeps() {
+        let jar = CookieJar::new();
+        jar.set_header("Cache-Control", "no-store");
+        jar.set_header("cache-control", "public, max-age=60");
+        jar.append_header("Link", "</a.css>; rel=preload");
+        jar.append_header("Link", "</b.css>; rel=preload");
+        assert_eq!(
+            jar.take_headers(),
+            [
+                ("cache-control".to_string(), "public, max-age=60".to_string()),
+                ("Link".to_string(), "</a.css>; rel=preload".to_string()),
+                ("Link".to_string(), "</b.css>; rel=preload".to_string()),
+            ]
+        );
     }
 
     #[test]

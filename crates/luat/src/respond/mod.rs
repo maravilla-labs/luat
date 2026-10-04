@@ -40,7 +40,9 @@ impl<R: ResourceResolver> Engine<R> {
     /// (or `?/name`) to a page with `+page.server.lua` run a form action; all
     /// other requests run layout and page `load` functions, render the page
     /// and wrap it in its layouts. Cookies set with `ctx.setCookie` are
-    /// returned as `Set-Cookie` headers.
+    /// returned as `Set-Cookie` headers; headers set with `ctx.setHeader` /
+    /// `ctx.appendHeader` are added to successful responses (headers the
+    /// handler returned itself take precedence).
     ///
     /// Use [`respond_async`](Self::respond_async) when host functions are
     /// async.
@@ -56,7 +58,7 @@ impl<R: ResourceResolver> Engine<R> {
     pub fn respond(&self, route: &Route, request: &LuatRequest) -> Result<LuatResponse> {
         let jar = CookieJar::new();
         let response = match self.dispatch(route, request, &jar) {
-            Ok(response) => response,
+            Ok(response) => with_headers(response, &jar),
             Err(err) => {
                 let (status, message) = self.classify_error(err)?;
                 self.error_response(route, request, status, message)
@@ -71,7 +73,7 @@ impl<R: ResourceResolver> Engine<R> {
     pub async fn respond_async(&self, route: &Route, request: &LuatRequest) -> Result<LuatResponse> {
         let jar = CookieJar::new();
         let response = match self.dispatch_async(route, request, &jar).await {
-            Ok(response) => response,
+            Ok(response) => with_headers(response, &jar),
             Err(err) => {
                 let (status, message) = self.classify_error(err)?;
                 self.error_response_async(route, request, status, message)
@@ -270,6 +272,29 @@ fn not_found_route(error_page: Option<&str>) -> Route {
 fn with_cookies(mut response: LuatResponse, jar: &CookieJar) -> LuatResponse {
     for cookie in jar.take() {
         response.headers_mut().append("set-cookie", cookie);
+    }
+    response
+}
+
+/// Adds the headers set with `ctx.setHeader` / `ctx.appendHeader`. A
+/// header the response already carries (returned by an API handler or
+/// action in `headers`) wins over values set through `ctx`.
+///
+/// Only successful dispatches get them: when a handler fails, the error
+/// response is built without them, so e.g. a `Cache-Control` meant for the
+/// page does not make an error cacheable.
+fn with_headers(mut response: LuatResponse, jar: &CookieJar) -> LuatResponse {
+    let set_headers = jar.take_headers();
+    let headers = response.headers_mut();
+    let explicit: Vec<String> = set_headers
+        .iter()
+        .filter(|(name, _)| headers.contains(name))
+        .map(|(name, _)| name.to_ascii_lowercase())
+        .collect();
+    for (name, value) in set_headers {
+        if !explicit.contains(&name.to_ascii_lowercase()) {
+            headers.append(name, value);
+        }
     }
     response
 }

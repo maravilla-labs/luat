@@ -16,6 +16,7 @@ use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 
 use crate::body::parse_structured_body;
+use crate::ctx_helpers::HandlerKind;
 use crate::request::LuatRequest;
 
 /// Result of running a load function.
@@ -151,7 +152,7 @@ impl<'lua> Runtime<'lua> {
         let Some(load_fn) = self.prepare_handler(source, name, "load")? else {
             return Ok(LoadResult::default());
         };
-        let ctx_table = self.create_context_table(request, params)?;
+        let ctx_table = self.create_context_table(request, params, HandlerKind::Load)?;
         let result: Value = load_fn.call(ctx_table)?;
         self.parse_load_result(result)
     }
@@ -171,7 +172,7 @@ impl<'lua> Runtime<'lua> {
         let Some(load_fn) = self.prepare_handler(source, name, "load")? else {
             return Ok(LoadResult::default());
         };
-        let ctx_table = self.create_context_table(request, params)?;
+        let ctx_table = self.create_context_table(request, params, HandlerKind::Load)?;
         let result: Value = load_fn.call_async(ctx_table).await?;
         self.parse_load_result(result)
     }
@@ -198,7 +199,7 @@ impl<'lua> Runtime<'lua> {
         let Some(handler_fn) = self.prepare_handler(source, name, &request.method)? else {
             return Ok(ApiResult::method_not_allowed(&request.method));
         };
-        let ctx_table = self.create_context_table(request, params)?;
+        let ctx_table = self.create_context_table(request, params, HandlerKind::Other)?;
         let result: Value = handler_fn.call(ctx_table)?;
         self.parse_api_result(result)
     }
@@ -215,7 +216,7 @@ impl<'lua> Runtime<'lua> {
         let Some(handler_fn) = self.prepare_handler(source, name, &request.method)? else {
             return Ok(ApiResult::method_not_allowed(&request.method));
         };
-        let ctx_table = self.create_context_table(request, params)?;
+        let ctx_table = self.create_context_table(request, params, HandlerKind::Other)?;
         let result: Value = handler_fn.call_async(ctx_table).await?;
         self.parse_api_result(result)
     }
@@ -241,6 +242,7 @@ impl<'lua> Runtime<'lua> {
         &self,
         request: &LuatRequest,
         params: &HashMap<String, String>,
+        kind: HandlerKind,
     ) -> LuaResult<Table> {
         let ctx = self.lua.create_table()?;
 
@@ -275,7 +277,7 @@ impl<'lua> Runtime<'lua> {
             cookies_table.set(key, value)?;
         }
         ctx.set("cookies", cookies_table)?;
-        crate::ctx_helpers::install(self.lua, &ctx, &self.cookies)?;
+        crate::ctx_helpers::install(self.lua, &ctx, &self.cookies, kind)?;
 
         // Add body/form/json
         if let Some(body) = &request.body {

@@ -36,7 +36,7 @@ impl<R: ResourceResolver> Engine<R> {
             let load_result = runtime
                 .run_load(&source, server_path, request, &route.params)
                 .map_err(LuatError::LuaError)?;
-            if let Some(redirect) = merge_load_result(&mut merged_props, load_result) {
+            if let Some(redirect) = merge_load_result(&mut merged_props, load_result, jar) {
                 return Ok(redirect);
             }
         }
@@ -51,7 +51,7 @@ impl<R: ResourceResolver> Engine<R> {
             body_html = self.render_template(layout_path, &layout_context, Some(&request_runtime))?;
         }
 
-        self.page_response(body_html, &request_runtime)
+        self.page_response(body_html, &request_runtime, jar)
     }
 
     /// Async variant of [`handle_page_route`](Self::handle_page_route), with
@@ -74,7 +74,7 @@ impl<R: ResourceResolver> Engine<R> {
                 .run_load_async(&source, server_path, request, &route.params)
                 .await
                 .map_err(LuatError::LuaError)?;
-            if let Some(redirect) = merge_load_result(&mut merged_props, load_result) {
+            if let Some(redirect) = merge_load_result(&mut merged_props, load_result, jar) {
                 return Ok(redirect);
             }
         }
@@ -93,7 +93,7 @@ impl<R: ResourceResolver> Engine<R> {
                 .await?;
         }
 
-        self.page_response(body_html, &request_runtime)
+        self.page_response(body_html, &request_runtime, jar)
     }
 
     /// Creates the per-request runtime table shared by a request's load
@@ -107,23 +107,37 @@ impl<R: ResourceResolver> Engine<R> {
         Ok(request_runtime)
     }
 
-    /// Builds the HTML response, adding `x-luat-title` when a template or
-    /// load function set `view_title`.
-    fn page_response(&self, body: String, request_runtime: &Table) -> Result<LuatResponse> {
+    /// Builds the HTML response with the status set by `ctx.setStatus` (or
+    /// a load function's `status`), 200 by default, adding `x-luat-title`
+    /// when a template or load function set `view_title`. Headers from
+    /// `ctx.setHeader` are added later, with the cookies.
+    fn page_response(&self, body: String, request_runtime: &Table, jar: &CookieJar) -> Result<LuatResponse> {
         let mut headers = Headers::new();
         if let Some(title) = view_title(request_runtime) {
             headers.insert("x-luat-title", title);
         }
-        Ok(LuatResponse::html_with_headers(200, body, headers))
+        Ok(LuatResponse::html_with_headers(jar.status().unwrap_or(200), body, headers))
     }
 }
 
 /// Applies a load result to the merged props, or returns the redirect
-/// response the load function asked for.
-fn merge_load_result(merged_props: &mut Map<String, JsonValue>, load_result: LoadResult) -> Option<LuatResponse> {
+/// response the load function asked for. A `status` returned without
+/// `redirect` sets the page status like `ctx.setStatus` (values that are not
+/// 2xx, 4xx or 5xx are ignored, as they always were).
+fn merge_load_result(
+    merged_props: &mut Map<String, JsonValue>,
+    load_result: LoadResult,
+    jar: &CookieJar,
+) -> Option<LuatResponse> {
     if let Some(redirect) = load_result.redirect {
         let status = load_result.status.unwrap_or(302);
         return Some(LuatResponse::redirect_with_status(status, redirect));
+    }
+    if let Some(status) = load_result
+        .status
+        .and_then(|s| crate::ctx_helpers::validate_status(i64::from(s)).ok())
+    {
+        jar.set_status(status);
     }
     if let JsonValue::Object(props) = load_result.props {
         merged_props.extend(props);
