@@ -137,6 +137,13 @@ impl mlua::IntoLuaMulti for LuatContext {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+impl<R: ResourceResolver> Drop for Engine<R> {
+    fn drop(&mut self) {
+        crate::limits::uninstall(&self.lua);
+    }
+}
+
 impl<R: ResourceResolver> Engine<R> {
     /// Returns a reference to the resolver used by this engine.
     pub fn resolver(&self) -> &R {
@@ -350,6 +357,10 @@ impl<R: ResourceResolver> Engine<R> {
 
         // Setup the custom module searcher to resolve Lua modules through our resolver
         engine.setup_custom_searcher()?;
+        // Install the limit hook before any code runs, so every coroutine
+        // created later inherits it (see limits.rs).
+        #[cfg(not(target_arch = "wasm32"))]
+        crate::limits::install(&engine.lua)?;
         // Lets per-module require cache by canonical path (see scoped_require).
         engine
             .lua
@@ -1771,6 +1782,23 @@ _G.__bundle_debug = {
             result.insert(k.clone(), mlua::Value::Table(v.clone()));
         }
         result
+    }
+
+    /// Applies execution limits to all guest code this engine runs,
+    /// replacing any previous limits. See [`crate::limits`].
+    ///
+    /// Fails if a limit already tripped: such an engine should be discarded.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_limits(&self, limits: &crate::limits::EngineLimits) -> Result<()> {
+        crate::limits::apply(&self.lua, limits)
+    }
+
+    /// Reports whether the instruction budget or the deadline stopped guest
+    /// code. Memory errors surface as the error itself; use
+    /// [`LimitExceeded::from_error`](crate::limits::LimitExceeded::from_error).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn limit_exceeded(&self) -> Option<crate::limits::LimitExceeded> {
+        crate::limits::tripped(&self.lua)
     }
 
     /// Returns a reference to the underlying Lua runtime.

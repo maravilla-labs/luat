@@ -84,6 +84,9 @@ pub mod runtime;
 
 mod scoped_require;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub mod limits;
+
 /// WASM bindings for browser usage.
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
@@ -109,6 +112,8 @@ pub use request::LuatRequest;
 pub use response::LuatResponse;
 pub use router::{Route, Router};
 pub use runtime::{ApiResult, LoadResult, Runtime};
+#[cfg(not(target_arch = "wasm32"))]
+pub use limits::{EngineLimits, LimitExceeded};
 pub use extensions::register_json_module;
 
 // Re-export mlua value
