@@ -13,7 +13,7 @@ use std::fs;
 use luat::bundle::{build, BuildOptions};
 use luat::packages::{login, search, yank, Lockfile, PackageError, PackageName, Project, Settings};
 use luat::{LuatRequest, LuatResponse};
-use support::{project, publish_package, raw_tarball, registry, settings, write};
+use support::{auth_settings, project, publish_package, raw_tarball, registry, settings, write};
 
 async fn publish_acme(root: &std::path::Path, url: &str) {
     publish_package(root, url, "@acme/icons", "2.0.0", &[], &[("src/Star.luat", "<i>*</i>")]).await;
@@ -115,7 +115,7 @@ async fn frozen_install_needs_a_current_lockfile() {
 async fn yanked_versions_are_skipped_unless_locked() {
     let tmp = tempfile::tempdir().unwrap();
     let (url, _store) = registry::start().await;
-    let s = settings(tmp.path());
+    let s = auth_settings(tmp.path(), &url);
     for v in ["2.0.0", "2.1.0"] {
         publish_package(tmp.path(), &url, "@acme/icons", v, &[], &[("src/init.lua", "return {}")]).await;
     }

@@ -25,6 +25,10 @@ pub struct Store {
     pub packages: BTreeMap<String, Vec<(IndexEntry, Vec<u8>)>>,
     /// `name@version`s whose downloads are corrupted.
     pub tampered: HashSet<String>,
+    /// Paths of every request that carried an Authorization header.
+    pub authorized_requests: Vec<String>,
+    /// When set, `/api/v1/me` redirects here (307).
+    pub redirect_me: Option<String>,
 }
 
 pub type Shared = Arc<Mutex<Store>>;
@@ -41,6 +45,7 @@ pub async fn start() -> (String, Shared) {
         .route("/api/v1/packages/:scope/:name/:version/yank", delete(yank))
         .route("/api/v1/packages/:scope/:name/:version/unyank", put(unyank))
         .route("/api/v1/me", get(me))
+        .layer(axum::middleware::from_fn_with_state(store.clone(), record_auth))
         .with_state(store.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
@@ -210,7 +215,21 @@ async fn unyank(State(store): State<Shared>, Path((scope, name, version)): Path<
     set_yanked(&store, &format!("{scope}/{name}"), &version, false)
 }
 
-async fn me(headers: HeaderMap) -> Response {
+async fn record_auth(
+    State(store): State<Shared>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    if request.headers().contains_key("authorization") {
+        store.lock().unwrap().authorized_requests.push(request.uri().path().to_string());
+    }
+    next.run(request).await
+}
+
+async fn me(State(store): State<Shared>, headers: HeaderMap) -> Response {
+    if let Some(target) = store.lock().unwrap().redirect_me.clone() {
+        return (StatusCode::TEMPORARY_REDIRECT, [("location", format!("{target}/api/v1/me"))]).into_response();
+    }
     if headers.get("authorization").and_then(|v| v.to_str().ok()) == Some("Bearer unbound") {
         return error(StatusCode::FORBIDDEN, "token is not bound to a user");
     }

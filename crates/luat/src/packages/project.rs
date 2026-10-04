@@ -85,6 +85,9 @@ impl Project {
         let manifest = self.manifest()?;
         let paths = path_deps::collect(&self.root, &manifest)?;
         let existing = Lockfile::load(&self.root)?;
+        if let Some(lock) = &existing {
+            check_lock_sources(&manifest, &paths, lock)?;
+        }
         let lock = match &existing {
             Some(lock) if is_fresh(&manifest, &paths, lock) => lock.clone(),
             _ if frozen => {
@@ -107,7 +110,12 @@ impl Project {
         let manifest = self.manifest()?;
         let paths = path_deps::collect(&self.root, &manifest)?;
         let existing = Lockfile::load(&self.root)?;
+        // `luat update` (everything) ignores the lockfile, so it also
+        // repairs one pointing at registries luat.toml no longer selects.
         let prefs = if name.is_some() { existing.as_ref() } else { None };
+        if let Some(lock) = prefs {
+            check_lock_sources(&manifest, &paths, lock)?;
+        }
         let lock = self.resolve(&manifest, &paths, prefs, name).await?;
         let report = install::install(&self.root, &self.packages_dir(), &lock, &self.settings).await?;
         lock.save(&self.root)?;
@@ -123,7 +131,7 @@ impl Project {
         let req = match req {
             Some(req) => req,
             None => {
-                let index = self.settings.client(&manifest.registries.url_for(&name)).index(&name).await?;
+                let index = self.settings.client(&manifest.registries.url_for(&name))?.index(&name).await?;
                 let luat = self.settings.luat_version();
                 let latest = index
                     .iter()
@@ -162,6 +170,9 @@ impl Project {
         let manifest = PackageManifest::parse(&new_text)?;
         let paths = path_deps::collect(&self.root, &manifest)?;
         let existing = Lockfile::load(&self.root)?;
+        if let Some(lock) = &existing {
+            check_lock_sources(&manifest, &paths, lock)?;
+        }
         let lock = self.resolve(&manifest, &paths, existing.as_ref(), None).await?;
         let report = install::install(&self.root, &self.packages_dir(), &lock, &self.settings).await?;
         std::fs::write(&path, new_text).ctx(|| format!("writing {}", path.display()))?;
@@ -198,7 +209,7 @@ impl Project {
             match resolve::resolve(&input, &indexes)? {
                 Step::Done(selected) => break selected,
                 Step::Need(name) => {
-                    let index = self.settings.client(&registries.url_for(&name)).index(&name).await?;
+                    let index = self.settings.client(&registries.url_for(&name))?.index(&name).await?;
                     indexes.insert(name, index);
                 }
             }
@@ -226,6 +237,35 @@ impl Project {
         packages.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(Lockfile { packages, ..Lockfile::default() })
     }
+}
+
+/// A lockfile is untrusted input: every registry entry must name the
+/// registry `luat.toml` selects for its scope, and every path entry a path
+/// dependency `luat.toml` declares. Anything else is an error, never
+/// something to follow.
+fn check_lock_sources(manifest: &PackageManifest, paths: &BTreeMap<PackageName, PathPackage>, lock: &Lockfile) -> Result<()> {
+    for p in &lock.packages {
+        if let Some(registry) = &p.registry {
+            let expected = manifest.registries.url_for(&p.name);
+            if super::normalize_url(registry) != expected {
+                return Err(PackageError::Manifest(format!(
+                    "{LOCKFILE_NAME} pins {} to registry {registry}, but {MANIFEST_NAME} selects {expected} for it; \
+                     run `luat update` to re-resolve",
+                    p.name
+                )));
+            }
+        }
+        if let Some(source) = &p.source {
+            if !paths.values().any(|path| &path.source == source && path.name == p.name) {
+                return Err(PackageError::Manifest(format!(
+                    "{LOCKFILE_NAME} takes {} from {source}, which {MANIFEST_NAME} does not declare; \
+                     run `luat update` to re-resolve",
+                    p.name
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// True when `lock` still describes `manifest`: every requirement is met by

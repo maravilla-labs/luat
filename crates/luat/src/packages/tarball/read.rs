@@ -11,7 +11,7 @@ use std::path::{Component, Path};
 use flate2::read::GzDecoder;
 
 use super::{MAX_COMPRESSED_BYTES, MAX_FILES, MAX_UNCOMPRESSED_BYTES};
-use crate::packages::error::{IoContext, PackageError, Result};
+use crate::packages::error::{PackageError, Result};
 
 /// A file read from a tarball.
 #[derive(Debug, Clone)]
@@ -105,29 +105,15 @@ fn package_relative(path: &Path) -> Option<Option<String>> {
     Some((!parts.is_empty()).then(|| parts.join("/")))
 }
 
-/// Validates `bytes` and writes its files below `dest` (which must not
-/// exist yet, or be empty). Paths are re-validated as they are written and
-/// never pass through a symlink.
+/// Validates `bytes` and writes its files below `dest`, which must not
+/// exist yet (its parent must). Nothing is written through a symlink:
+/// directories are created one level at a time and files with
+/// `create_new`.
 pub fn extract(bytes: &[u8], dest: &Path) -> Result<Vec<String>> {
     let files = read_tarball(bytes)?;
-    std::fs::create_dir_all(dest).ctx(|| format!("creating {}", dest.display()))?;
+    crate::packages::safe_fs::new_dir(dest)?;
     for file in &files {
-        let target = dest.join(&file.path);
-        if !target.starts_with(dest) || Path::new(&file.path).components().any(|c| !matches!(c, Component::Normal(_))) {
-            return Err(bad(format!("entry '{}' escapes the package", file.path)));
-        }
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent).ctx(|| format!("creating {}", parent.display()))?;
-            // Nothing below `dest` may be a symlink (dest is fresh, but be sure).
-            let mut walk = parent;
-            while walk != dest {
-                if std::fs::symlink_metadata(walk).map(|m| m.file_type().is_symlink()).unwrap_or(true) {
-                    return Err(bad(format!("entry '{}' passes through a link", file.path)));
-                }
-                walk = walk.parent().unwrap_or(dest);
-            }
-        }
-        std::fs::write(&target, &file.data).ctx(|| format!("writing {}", target.display()))?;
+        crate::packages::safe_fs::write_new_below(dest, &file.path, &file.data)?;
     }
     Ok(files.into_iter().map(|f| f.path).collect())
 }

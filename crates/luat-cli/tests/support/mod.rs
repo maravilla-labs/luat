@@ -21,12 +21,19 @@ pub fn write(root: &Path, files: &[(&str, &str)]) {
     }
 }
 
-/// Settings that never read the user's credentials or environment.
+/// Settings that never read the user's credentials (and hold no token).
 pub fn settings(dir: &Path) -> Settings {
     Settings {
         credentials_path: Some(dir.join("credentials.toml")),
-        token: Some(registry::TOKEN.to_string()),
-        luat_version: None,
+        ..Default::default()
+    }
+}
+
+/// Like [`settings`], with the test token bound to `url`.
+pub fn auth_settings(dir: &Path, url: &str) -> Settings {
+    Settings {
+        tokens: [(url.to_string(), registry::TOKEN.to_string())].into(),
+        ..settings(dir)
     }
 }
 
@@ -39,7 +46,7 @@ pub async fn publish_package(root: &Path, url: &str, name: &str, version: &str, 
     );
     write(&dir, &[("luat.toml", &manifest), ("README.md", "# readme")]);
     write(&dir, files);
-    let outcome = publish(&dir, false, &settings(root)).await.unwrap();
+    let outcome = publish(&dir, false, &auth_settings(root, url)).await.unwrap();
     assert_eq!(outcome.result.unwrap().vers, version);
 }
 

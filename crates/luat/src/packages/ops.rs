@@ -19,7 +19,7 @@ use super::Settings;
 /// Searches `registry` (page 1-based, `per_page` at most 100).
 pub async fn search(registry: &str, query: &str, page: u32, per_page: u32, settings: &Settings) -> Result<SearchResults> {
     let query = Some(query).filter(|q| !q.is_empty());
-    settings.client(registry).search(query, page, per_page).await
+    settings.client(registry)?.search(query, page, per_page).await
 }
 
 /// What [`publish`] did.
@@ -45,7 +45,7 @@ pub async fn publish(dir: &Path, dry_run: bool, settings: &Settings) -> Result<P
     if dry_run {
         return Ok(PublishOutcome { tarball, registry, result: None });
     }
-    let client = settings.client(&registry);
+    let client = settings.auth_client(&registry)?;
     let result = client.publish(&meta.name, &meta.version, tarball.bytes.clone()).await?;
     Ok(PublishOutcome {
         tarball,
@@ -57,7 +57,7 @@ pub async fn publish(dir: &Path, dry_run: bool, settings: &Settings) -> Result<P
 /// Checks `token` against `registry` (`GET /api/v1/me`) and stores it in the
 /// credentials file ([`Settings::credentials_path`] or the default).
 pub async fn login(registry: &str, token: &str, settings: &Settings) -> Result<Me> {
-    let me = RegistryClient::new(registry)
+    let me = RegistryClient::new(registry)?
         .with_token(Some(token.to_string()))
         .me()
         .await
@@ -83,5 +83,5 @@ pub async fn login(registry: &str, token: &str, settings: &Settings) -> Result<M
 
 /// Yanks (or with `undo`, unyanks) `name@version` on `registry`.
 pub async fn yank(registry: &str, name: &PackageName, version: &Version, undo: bool, settings: &Settings) -> Result<()> {
-    settings.client(registry).set_yanked(name, version, !undo).await
+    settings.auth_client(registry)?.set_yanked(name, version, !undo).await
 }

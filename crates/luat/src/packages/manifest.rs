@@ -149,9 +149,7 @@ impl PackageManifest {
 
         let mut registries = Registries::default();
         for (key, url) in raw.registries {
-            if !(url.starts_with("https://") || url.starts_with("http://")) {
-                return Err(PackageError::Manifest(format!("registry '{key}' must be an http(s) URL, got '{url}'")));
-            }
+            let url = super::normalize_registry_url(&url)?;
             if key == "default" {
                 registries.default = Some(normalize_url(&url));
             } else {
@@ -282,6 +280,7 @@ default = "https://example.com/"
             "[dependencies]\n\"a/b\" = \"^1\"",
             "[registries]\nscope = \"https://x\"",
             "[registries]\ndefault = \"ftp://x\"",
+            "[registries]\ndefault = \"http://registry.example.com\"",
         ] {
             assert!(PackageManifest::parse(bad).is_err(), "{bad}");
         }

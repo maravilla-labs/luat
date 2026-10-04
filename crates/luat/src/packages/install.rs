@@ -20,7 +20,7 @@ use super::lockfile::{LockedPackage, Lockfile};
 use super::manifest::PackageManifest;
 use super::name::PackageName;
 use super::tarball::extract;
-use super::Settings;
+use super::{safe_fs, Settings};
 
 /// Marker file inside an installed package: the checksum it was installed
 /// from (`path` for path dependencies).
@@ -42,7 +42,11 @@ pub struct InstallReport {
 pub(crate) fn is_installed(packages_dir: &Path, lock: &Lockfile) -> bool {
     let wanted: BTreeSet<String> = lock.packages.iter().map(|p| p.name.to_string()).collect();
     let all_present = lock.packages.iter().all(|p| {
-        let marker = std::fs::read_to_string(packages_dir.join(p.name.to_string()).join(MARKER)).ok();
+        let dir = packages_dir.join(p.name.to_string());
+        if safe_fs::not_a_link(&dir).is_err() || safe_fs::not_a_link(dir.parent().expect("scope")).is_err() {
+            return false; // install refuses it
+        }
+        let marker = std::fs::read_to_string(dir.join(MARKER)).ok();
         marker.as_deref() == Some(expected_marker(p))
     });
     let installed: BTreeSet<String> = installed_names(packages_dir).into_iter().map(|n| n.to_string()).collect();
@@ -56,10 +60,12 @@ fn expected_marker(p: &LockedPackage) -> &str {
 /// Installs every package of `lock` below `packages_dir` and removes the
 /// ones not in it. Path dependencies are re-copied every time.
 pub(crate) async fn install(project: &Path, packages_dir: &Path, lock: &Lockfile, settings: &Settings) -> Result<InstallReport> {
-    ensure_real_dir(packages_dir)?;
+    prepare_packages_dir(project, packages_dir)?;
     let mut report = InstallReport::default();
     for package in &lock.packages {
         let dest = packages_dir.join(package.name.to_string());
+        safe_fs::real_dir(dest.parent().expect("scope dir"))?;
+        safe_fs::not_a_link(&dest)?;
         if let Some(rel) = package.path_source() {
             copy_path_package(&project.join(rel), packages_dir, &dest)?;
         } else {
@@ -69,14 +75,18 @@ pub(crate) async fn install(project: &Path, packages_dir: &Path, lock: &Lockfile
                 continue;
             }
             let registry = package.registry.as_deref().expect("validated lockfile");
-            let bytes = settings.client(registry).download(&package.name, &package.version, checksum).await?;
+            // Reads are anonymous: installing never sends credentials.
+            let client = settings.client(registry)?;
+            verify_index_checksum(&client, package, checksum).await?;
+            let bytes = client.download(&package.name, &package.version, checksum).await?;
             let temp = temp_dir(packages_dir);
-            let result = extract(&bytes, &temp).and_then(|_| check_manifest(&temp, package));
+            let result = extract(&bytes, &temp)
+                .and_then(|_| check_manifest(&temp, package))
+                .and_then(|_| safe_fs::write_new_below(&temp, MARKER, checksum.as_bytes()));
             if let Err(e) = result {
-                let _ = std::fs::remove_dir_all(&temp);
+                let _ = remove_any(&temp);
                 return Err(e);
             }
-            std::fs::write(temp.join(MARKER), checksum).ctx(|| "writing install marker".to_string())?;
             swap_in(&temp, &dest)?;
         }
         report.installed.push((package.name.clone(), package.version.clone()));
@@ -94,6 +104,34 @@ pub(crate) async fn install(project: &Path, packages_dir: &Path, lock: &Lockfile
     Ok(report)
 }
 
+/// `<project>/.luat` and `.luat/packages` must be real directories.
+fn prepare_packages_dir(project: &Path, packages_dir: &Path) -> Result<()> {
+    if packages_dir == project.join(super::PACKAGES_DIR) {
+        safe_fs::real_dir(&project.join(".luat"))?;
+    } else if let Some(parent) = packages_dir.parent() {
+        std::fs::create_dir_all(parent).ctx(|| format!("creating {}", parent.display()))?;
+    }
+    safe_fs::real_dir(packages_dir)
+}
+
+/// The lockfile's checksum must also be what the registry's index says
+/// for that version, so a tampered lockfile cannot pin other bytes.
+async fn verify_index_checksum(client: &super::RegistryClient, package: &LockedPackage, checksum: &str) -> Result<()> {
+    let index = client.index(&package.name).await?;
+    let entry = index.iter().find(|e| e.vers == package.version).ok_or_else(|| {
+        PackageError::NotFound(format!("{}@{} is not in the index of {}", package.name, package.version, client.base_url()))
+    })?;
+    if !entry.cksum.eq_ignore_ascii_case(checksum) {
+        return Err(PackageError::ChecksumMismatch {
+            name: package.name.to_string(),
+            version: format!("{} (luat.lock vs registry index)", package.version),
+            expected: checksum.to_string(),
+            actual: entry.cksum.clone(),
+        });
+    }
+    Ok(())
+}
+
 /// The tarball's `luat.toml` must describe the locked package.
 fn check_manifest(root: &Path, package: &LockedPackage) -> Result<()> {
     let manifest = PackageManifest::load(root)?;
@@ -107,38 +145,42 @@ fn check_manifest(root: &Path, package: &LockedPackage) -> Result<()> {
     Ok(())
 }
 
-/// Copies what `pack` would ship from a path dependency's directory.
+/// Copies what `pack` would ship from a path dependency's directory:
+/// regular files only (symlinks are skipped by `package_files`, and each
+/// file is re-checked), canonically inside the package, written without
+/// following links.
 fn copy_path_package(source: &Path, packages_dir: &Path, dest: &Path) -> Result<()> {
     let source = std::fs::canonicalize(source).ctx(|| format!("resolving {}", source.display()))?;
     let manifest = PackageManifest::load(&source)?;
     let include = manifest.package()?.include.clone();
     let files = package_files(&source, include.as_deref())?;
     let temp = temp_dir(packages_dir);
+    safe_fs::new_dir(&temp)?;
     let copy = || -> Result<()> {
         for (rel, abs) in &files.files {
+            let meta = std::fs::symlink_metadata(abs).ctx(|| format!("inspecting {}", abs.display()))?;
             let canonical = std::fs::canonicalize(abs).ctx(|| format!("resolving {}", abs.display()))?;
-            if !canonical.starts_with(&source) {
-                return Err(PackageError::Tarball(format!("{rel} escapes {}", source.display())));
+            if !meta.is_file() || !canonical.starts_with(&source) {
+                return Err(PackageError::Tarball(format!("{rel} is not a regular file inside {}", source.display())));
             }
-            let target = temp.join(rel);
-            std::fs::create_dir_all(target.parent().expect("file below temp")).ctx(|| format!("creating dir for {rel}"))?;
-            std::fs::copy(&canonical, &target).ctx(|| format!("copying {rel}"))?;
+            let data = std::fs::read(&canonical).ctx(|| format!("reading {rel}"))?;
+            safe_fs::write_new_below(&temp, rel, &data)?;
         }
-        std::fs::write(temp.join(MARKER), "path").ctx(|| "writing install marker".to_string())
+        safe_fs::write_new_below(&temp, MARKER, b"path")
     };
-    std::fs::create_dir_all(&temp).ctx(|| format!("creating {}", temp.display()))?;
     if let Err(e) = copy() {
-        let _ = std::fs::remove_dir_all(&temp);
+        let _ = remove_any(&temp);
         return Err(e);
     }
     swap_in(&temp, dest)
 }
 
-/// Replaces `dest` with `temp` by renames.
+/// Replaces `dest` with `temp` by renames. `dest`'s scope directory and
+/// `dest` itself must not be symlinks.
 fn swap_in(temp: &Path, dest: &Path) -> Result<()> {
     let scope = dest.parent().expect("dest has a scope dir");
-    std::fs::create_dir_all(scope).ctx(|| format!("creating {}", scope.display()))?;
-    ensure_real_dir(scope)?;
+    safe_fs::real_dir(scope)?;
+    safe_fs::not_a_link(dest)?;
     let old = temp.with_extension("old");
     let had_old = match std::fs::symlink_metadata(dest) {
         Ok(_) => {
@@ -160,16 +202,6 @@ fn remove_any(path: &Path) -> std::io::Result<()> {
         Ok(_) => std::fs::remove_file(path),
         Err(e) => Err(e),
     }
-}
-
-/// Refuses to write through a symlinked packages or scope directory.
-fn ensure_real_dir(dir: &Path) -> Result<()> {
-    std::fs::create_dir_all(dir).ctx(|| format!("creating {}", dir.display()))?;
-    let meta = std::fs::symlink_metadata(dir).ctx(|| format!("inspecting {}", dir.display()))?;
-    if !meta.is_dir() {
-        return Err(PackageError::Manifest(format!("{} must be a directory, not a link", dir.display())));
-    }
-    Ok(())
 }
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);

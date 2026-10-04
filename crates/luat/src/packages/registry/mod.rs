@@ -14,7 +14,7 @@ pub use types::{IndexEntry, Me, PackageInfo, PublishResult, SearchHit, SearchRes
 
 use super::error::{PackageError, Result};
 use super::name::PackageName;
-use super::normalize_url;
+use super::normalize_registry_url;
 use super::tarball::{checksum, MAX_COMPRESSED_BYTES};
 
 /// A client for one registry.
@@ -22,25 +22,30 @@ use super::tarball::{checksum, MAX_COMPRESSED_BYTES};
 pub struct RegistryClient {
     base: String,
     token: Option<String>,
+    /// Anonymous reads; may follow redirects (e.g. to a download host).
     http: reqwest::Client,
+    /// Authenticated requests; never follows redirects, so the token only
+    /// ever goes to `base`'s origin.
+    auth_http: reqwest::Client,
 }
 
 impl RegistryClient {
     /// A client for the registry at `base_url` (e.g.
-    /// `https://registry.example.com/luat`).
-    pub fn new(base_url: &str) -> Self {
-        let http = reqwest::Client::builder()
-            .user_agent(concat!("luat/", env!("CARGO_PKG_VERSION")))
-            .build()
-            .expect("http client");
-        Self {
-            base: normalize_url(base_url),
+    /// `https://registry.example.com/luat`). Plain `http://` is refused
+    /// except for localhost.
+    pub fn new(base_url: &str) -> Result<Self> {
+        let base = normalize_registry_url(base_url)?;
+        let builder = || reqwest::Client::builder().user_agent(concat!("luat/", env!("CARGO_PKG_VERSION")));
+        Ok(Self {
+            base,
             token: None,
-            http,
-        }
+            http: builder().redirect(reqwest::redirect::Policy::limited(5)).build()?,
+            auth_http: builder().redirect(reqwest::redirect::Policy::none()).build()?,
+        })
     }
 
-    /// Uses `token` as bearer token (sent with every request when set).
+    /// Uses `token` as bearer token for authenticated operations (publish,
+    /// yank, me). Reads never send it.
     pub fn with_token(mut self, token: Option<String>) -> Self {
         self.token = token;
         self
@@ -51,19 +56,15 @@ impl RegistryClient {
         &self.base
     }
 
+    /// An anonymous request.
     fn request(&self, method: Method, path: &str) -> RequestBuilder {
-        let builder = self.http.request(method, format!("{}{path}", self.base));
-        match &self.token {
-            Some(token) => builder.bearer_auth(token),
-            None => builder,
-        }
+        self.http.request(method, format!("{}{path}", self.base))
     }
 
-    fn require_token(&self) -> Result<()> {
-        match self.token {
-            Some(_) => Ok(()),
-            None => Err(PackageError::NoToken(self.base.clone())),
-        }
+    /// An authenticated request to `base` (redirects are not followed).
+    fn authed(&self, method: Method, path: &str) -> Result<RequestBuilder> {
+        let token = self.token.as_ref().ok_or_else(|| PackageError::NoToken(self.base.clone()))?;
+        Ok(self.auth_http.request(method, format!("{}{path}", self.base)).bearer_auth(token))
     }
 
     /// Every version of `name`, oldest first (`GET /index/@scope/name`).
@@ -129,9 +130,8 @@ impl RegistryClient {
 
     /// Publishes a tarball as `name@version`.
     pub async fn publish(&self, name: &PackageName, version: &Version, tarball: Vec<u8>) -> Result<PublishResult> {
-        self.require_token()?;
         let response = self
-            .request(Method::PUT, &format!("/api/v1/packages/{}/{version}", name.url_path()))
+            .authed(Method::PUT, &format!("/api/v1/packages/{}/{version}", name.url_path()))?
             .header(reqwest::header::CONTENT_TYPE, "application/gzip")
             .body(tarball)
             .send()
@@ -141,17 +141,16 @@ impl RegistryClient {
 
     /// Yanks (`yanked = true`) or unyanks a version.
     pub async fn set_yanked(&self, name: &PackageName, version: &Version, yanked: bool) -> Result<()> {
-        self.require_token()?;
         let (method, action) = if yanked { (Method::DELETE, "yank") } else { (Method::PUT, "unyank") };
         let path = format!("/api/v1/packages/{}/{version}/{action}", name.url_path());
-        check(self.request(method, &path).send().await?).await?;
+        check(self.authed(method, &path)?.send().await?).await?;
         Ok(())
     }
 
     /// Who the token belongs to (`GET /api/v1/me`).
     pub async fn me(&self) -> Result<Me> {
-        self.require_token()?;
-        self.get_json("/api/v1/me").await
+        let response = self.authed(Method::GET, "/api/v1/me")?.send().await?;
+        Ok(check(response).await?.json().await?)
     }
 
     async fn get_json<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
@@ -171,6 +170,13 @@ async fn check(response: Response) -> Result<Response> {
         return Ok(response);
     }
     let url = response.url().to_string();
+    if status.is_redirection() {
+        return Err(PackageError::Registry {
+            url,
+            status: status.as_u16(),
+            message: "authenticated requests do not follow redirects; use the registry's final URL".to_string(),
+        });
+    }
     let body = response.text().await.unwrap_or_default();
     let message = serde_json::from_str::<serde_json::Value>(&body)
         .ok()
