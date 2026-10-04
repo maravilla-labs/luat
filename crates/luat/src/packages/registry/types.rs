@@ -55,9 +55,13 @@ pub struct PackageInfo {
     /// Description.
     #[serde(default)]
     pub description: Option<String>,
-    /// Latest version.
+    /// Latest version: highest non-yanked release, else highest non-yanked
+    /// pre-release, else highest version.
     #[serde(default)]
     pub latest: Option<Version>,
+    /// The described version (only for the per-version endpoint).
+    #[serde(default)]
+    pub vers: Option<Version>,
     /// License.
     #[serde(default)]
     pub license: Option<String>,

@@ -197,7 +197,11 @@ async fn login_search_and_remove() {
         credentials_path: Some(creds.clone()),
         ..Default::default()
     };
-    assert!(login(&url, "wrong", &s).await.is_err());
+    let err = login(&url, "wrong", &s).await.unwrap_err().to_string();
+    assert!(err.contains("rejected the token"), "{err}");
+    let err = login(&url, "unbound", &s).await.unwrap_err().to_string();
+    assert!(err.contains("not bound to a user"), "{err}");
+    assert!(!creds.exists());
     let me = login(&url, registry::TOKEN, &s).await.unwrap();
     assert_eq!(me.user, "tester");
     assert!(fs::read_to_string(&creds).unwrap().contains(registry::TOKEN));

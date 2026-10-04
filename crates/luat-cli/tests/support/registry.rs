@@ -211,6 +211,9 @@ async fn unyank(State(store): State<Shared>, Path((scope, name, version)): Path<
 }
 
 async fn me(headers: HeaderMap) -> Response {
+    if headers.get("authorization").and_then(|v| v.to_str().ok()) == Some("Bearer unbound") {
+        return error(StatusCode::FORBIDDEN, "token is not bound to a user");
+    }
     if !authorized(&headers) {
         return error(StatusCode::UNAUTHORIZED, "bad token");
     }

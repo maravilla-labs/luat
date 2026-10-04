@@ -10,7 +10,7 @@ use semver::Version;
 
 use super::credentials::{default_credentials_path, Credentials};
 use super::error::{PackageError, Result};
-use super::manifest::{Dependency, PackageManifest};
+use super::manifest::PackageManifest;
 use super::name::PackageName;
 use super::registry::{Me, PublishResult, RegistryClient, SearchResults};
 use super::tarball::{pack, Tarball};
@@ -34,24 +34,12 @@ pub struct PublishOutcome {
 }
 
 /// Packs the package at `dir` and publishes it to the registry its
-/// `[registries]` select for its scope. Packages with path dependencies are
+/// `[registries]` select for its scope. Packages with path dependencies (or
+/// any dependency value that is not a plain requirement string) are
 /// refused: published packages may only depend on registry versions.
 pub async fn publish(dir: &Path, dry_run: bool, settings: &Settings) -> Result<PublishOutcome> {
     let manifest = PackageManifest::load(dir)?;
     let meta = manifest.package()?;
-    let path_deps: Vec<String> = manifest
-        .dependencies
-        .iter()
-        .filter(|(_, d)| matches!(d, Dependency::Path { .. }))
-        .map(|(n, _)| n.to_string())
-        .collect();
-    if !path_deps.is_empty() {
-        return Err(PackageError::Manifest(format!(
-            "{} has path dependencies ({}); published packages can only depend on registry versions",
-            meta.name,
-            path_deps.join(", ")
-        )));
-    }
     let registry = manifest.registries.url_for(&meta.name);
     let tarball = pack(dir)?;
     if dry_run {
@@ -69,7 +57,19 @@ pub async fn publish(dir: &Path, dry_run: bool, settings: &Settings) -> Result<P
 /// Checks `token` against `registry` (`GET /api/v1/me`) and stores it in the
 /// credentials file ([`Settings::credentials_path`] or the default).
 pub async fn login(registry: &str, token: &str, settings: &Settings) -> Result<Me> {
-    let me = RegistryClient::new(registry).with_token(Some(token.to_string())).me().await?;
+    let me = RegistryClient::new(registry)
+        .with_token(Some(token.to_string()))
+        .me()
+        .await
+        .map_err(|e| match e {
+            PackageError::Registry { status: 401, message, .. } => {
+                PackageError::Manifest(format!("{registry} rejected the token ({message})"))
+            }
+            PackageError::Registry { status: 403, message, .. } => PackageError::Manifest(format!(
+                "{registry} accepted the token but it is not bound to a user, so it cannot publish ({message})"
+            )),
+            other => other,
+        })?;
     let path = settings
         .credentials_path
         .clone()
