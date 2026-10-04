@@ -39,6 +39,10 @@ pub struct BuildOptions {
     pub app_html: Option<PathBuf>,
     /// Further module directories (handlers, jobs, …) to include.
     pub module_dirs: Vec<ModuleDir>,
+    /// Modules the host registers at runtime (`Engine::register_module`).
+    /// Requires of these names are left to the host instead of being
+    /// resolved (and warned about) at build time.
+    pub host_modules: Vec<String>,
 }
 
 /// The result of a build.
@@ -92,7 +96,7 @@ pub fn build(options: &BuildOptions, progress: impl FnMut(usize, usize)) -> Resu
     }
 
     let mut warnings = Vec::new();
-    let require_map = require_map(&files, engine.resolver(), &mut warnings);
+    let require_map = require_map(&files, engine.resolver(), &options.host_modules, &mut warnings);
 
     let (templates, server_sources): (Vec<_>, Vec<_>) = files.into_iter().partition(SourceFile::is_template);
     let template_count = templates.len();
@@ -168,6 +172,7 @@ fn collect(dir: &Path, prefix: &str) -> Result<Vec<SourceFile>> {
 fn require_map(
     files: &[SourceFile],
     resolver: &dyn ResourceResolver,
+    host_modules: &[String],
     warnings: &mut Vec<String>,
 ) -> BTreeMap<String, BTreeMap<String, String>> {
     let key_by_path: HashMap<&Path, &str> = files.iter().map(|f| (f.abs.as_path(), f.key.as_str())).collect();
@@ -191,7 +196,7 @@ fn require_map(
         }
 
         let importer = file.abs.to_string_lossy();
-        for name in requires {
+        for name in requires.into_iter().filter(|n| !host_modules.contains(n)) {
             let resolved = resolver
                 .get_resolved_path(&importer, &name)
                 .map_err(|e| e.to_string())

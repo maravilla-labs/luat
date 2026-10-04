@@ -44,6 +44,7 @@ fn project() -> (tempfile::TempDir, BuildOptions) {
             ),
             ("src/lib/util.lua", "return { greet = function(n) return 'hello ' .. n end }"),
             ("jobs/count.lua", "return { n = 3 }"),
+            ("src/routes/hosted/+server.lua", "local h = require('myhost')\nfunction GET() return { body = 'ok' } end"),
         ],
     );
     let options = BuildOptions {
@@ -54,6 +55,7 @@ fn project() -> (tempfile::TempDir, BuildOptions) {
             prefix: "jobs".to_string(),
             dir: dir.path().join("jobs"),
         }],
+        host_modules: vec!["myhost".to_string()],
     };
     (dir, options)
 }
@@ -71,7 +73,7 @@ fn built_bundle_serves_the_app() {
     let (_dir, options) = project();
     let output = build(&options, |_, _| {}).unwrap();
     assert!(output.warnings.is_empty(), "{:?}", output.warnings);
-    assert_eq!(output.route_count, 3, "_private must not be routed");
+    assert_eq!(output.route_count, 4, "_private must not be routed");
 
     let app = output.bundle.instantiate().unwrap();
 

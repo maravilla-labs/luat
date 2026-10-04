@@ -50,6 +50,8 @@ pub async fn run(source: bool, output: &str) -> anyhow::Result<()> {
         lib_dir: Some(working_dir.join(&config.routing.lib_dir)),
         app_html: Some(working_dir.join(&config.routing.app_html)),
         module_dirs: Vec::new(),
+        // The CLI registers these before serving (see server/http.rs, serve.rs).
+        host_modules: vec!["http".to_string(), "kv".to_string()],
     };
 
     let pb = ProgressBar::new(0);
