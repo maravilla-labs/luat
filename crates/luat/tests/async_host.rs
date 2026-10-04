@@ -182,7 +182,7 @@ async fn interleaved_requests_keep_their_own_page_context() {
     });
 
     let title = |r: LuatResponse| match r {
-        LuatResponse::Html { headers, .. } => headers.get("x-luat-title").cloned(),
+        LuatResponse::Html { headers, .. } => headers.get("x-luat-title").map(str::to_string),
         other => panic!("expected html, got {other:?}"),
     };
     assert_eq!(title(a.unwrap()).as_deref(), Some("from-a"));

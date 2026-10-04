@@ -15,7 +15,7 @@ use axum::{
     body::Body,
     extract::{Request, State},
     http::{Method, StatusCode},
-    response::{Html, IntoResponse, Response},
+    response::{IntoResponse, Response},
     Router,
 };
 use console::style;
@@ -101,8 +101,8 @@ pub struct AppState {
     pub config: Config,
     /// URL router for matching requests.
     pub router: Option<BundleRouter>,
-    /// HTML template for wrapping rendered pages.
-    pub app_html_template: Option<String>,
+    /// The HTML shell pages are rendered into (`dist/app.html`).
+    pub shell: luat::AppShell,
 }
 
 const MAX_BODY_SIZE: usize = 1024 * 1024;
@@ -178,7 +178,7 @@ pub async fn run(host: &str, port: u16) -> anyhow::Result<()> {
         engine: RwLock::new(engine),
         config: config.clone(),
         router,
-        app_html_template,
+        shell: app_html_template.map(luat::AppShell::new).unwrap_or_default(),
     });
 
     // Serve static files from dist/
@@ -321,13 +321,17 @@ async fn fallback_handler(
 
             let engine = state.engine.read().await;
             return match engine.respond_async(&engine_route, &luat_request).await {
-                Ok(response) => luat_response_to_http(response, &state),
-                Err(e) => error_page(&format!("Error: {}", e)),
+                Ok(response) => luat_response_to_http(response, &state, &luat_request),
+                // Only execution-limit errors reach here.
+                Err(e) => {
+                    tracing::error!(error = %e, "request stopped");
+                    crate::server::response::error(500, "Internal Server Error")
+                }
             };
         }
     }
 
-    error_page("Page not found")
+    crate::server::response::error(404, "Not Found")
 }
 
 fn to_luat_request(
@@ -376,129 +380,14 @@ fn bundle_route_to_engine_route(
     engine_route
 }
 
-fn luat_response_to_http(response: LuatResponse, state: &AppState) -> Response {
-    match response {
-        LuatResponse::Html {
-            status,
-            mut headers,
-            body,
-        } => {
-            let is_fragment = headers.remove("x-luat-fragment").is_some()
-                || headers.remove("X-Luat-Fragment").is_some();
-            let status_code = StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
-            let has_content_type = has_content_type_header(&headers);
-
-            let mut builder = axum::http::Response::builder().status(status_code);
-            for (key, value) in headers {
-                builder = builder.header(key, value);
-            }
-
-            if !has_content_type {
-                builder = builder.header("content-type", "text/html; charset=utf-8");
-            }
-
-            if is_fragment {
-                return builder.body(Body::from(body)).unwrap_or_else(|_| {
-                    (StatusCode::INTERNAL_SERVER_ERROR, "Failed to build response")
-                        .into_response()
-                });
-            }
-
-            let title = "Luat App";
-            let head_assets = collect_production_head_assets(&state.config);
-            let app_html = state
-                .app_html_template
-                .as_deref()
-                .unwrap_or(DEFAULT_APP_HTML);
-            let full_html = wrap_with_app_html(app_html, &body, title, &head_assets);
-
-            builder.body(Body::from(full_html)).unwrap_or_else(|_| {
-                (StatusCode::INTERNAL_SERVER_ERROR, "Failed to build response").into_response()
-            })
-        }
-        LuatResponse::Json {
-            status,
-            headers,
-            body,
-        } => {
-            let status_code = StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
-            let has_content_type = has_content_type_header(&headers);
-            let mut builder = axum::http::Response::builder().status(status_code);
-
-            for (key, value) in headers {
-                builder = builder.header(key, value);
-            }
-
-            if !has_content_type {
-                builder = builder.header("content-type", "application/json");
-            }
-
-            builder
-                .body(Body::from(
-                    serde_json::to_string(&body).unwrap_or_default(),
-                ))
-                .unwrap_or_else(|_| {
-                    (StatusCode::INTERNAL_SERVER_ERROR, "Failed to build response")
-                        .into_response()
-                })
-        }
-        LuatResponse::Redirect { status, location } => {
-            let status_code = StatusCode::from_u16(status).unwrap_or(StatusCode::FOUND);
-            Response::builder()
-                .status(status_code)
-                .header("location", location)
-                .body(Body::empty())
-                .unwrap_or_else(|_| {
-                    (StatusCode::INTERNAL_SERVER_ERROR, "Failed to build response")
-                        .into_response()
-                })
-        }
-        LuatResponse::Error { status, message } => {
-            let _ = status;
-            error_page(&message)
-        }
-    }
+fn luat_response_to_http(response: LuatResponse, state: &AppState, request: &LuatRequest) -> Response {
+    let options = luat::ShellOptions {
+        head: collect_production_head_assets(&state.config),
+        ..Default::default()
+    };
+    crate::server::response::to_axum(luat::finalize(response, request, &state.shell, &options))
 }
 
-fn has_content_type_header(headers: &HashMap<String, String>) -> bool {
-    headers
-        .keys()
-        .any(|key| key.eq_ignore_ascii_case("content-type"))
-}
-
-fn error_page(message: &str) -> Response {
-    Html(format!(
-        r#"<!DOCTYPE html>
-<html>
-<head>
-    <title>Error</title>
-    <style>
-        body {{ font-family: system-ui, sans-serif; padding: 2rem; background: #f5f5f5; color: #333; }}
-        .error {{ background: white; border-left: 4px solid #e53e3e; padding: 1rem; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
-        pre {{ background: #1a1a2e; color: #eee; padding: 1rem; overflow-x: auto; border-radius: 4px; }}
-    </style>
-</head>
-<body>
-    <h1>Error</h1>
-    <div class="error">
-        <pre>{}</pre>
-    </div>
-</body>
-</html>"#,
-        html_escape(message)
-    ))
-    .into_response()
-}
-
-fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
-}
-
-/// Collect head assets for production
 fn collect_production_head_assets(config: &Config) -> String {
     let mut head = String::new();
 
@@ -532,23 +421,3 @@ fn collect_production_head_assets(config: &Config) -> String {
     head
 }
 
-fn wrap_with_app_html(app_html: &str, body: &str, title: &str, head_assets: &str) -> String {
-    app_html
-        .replace("%luat.title%", title)
-        .replace("%luat.head%", head_assets)
-        .replace("%luat.body%", body)
-}
-
-const DEFAULT_APP_HTML: &str = r#"<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>%luat.title%</title>
-    %luat.head%
-</head>
-<body>
-    %luat.body%
-</body>
-</html>
-"#;

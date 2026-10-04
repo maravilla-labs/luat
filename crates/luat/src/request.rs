@@ -93,6 +93,26 @@ impl LuatRequest {
             .and_then(|s| serde_json::from_str(s).ok())
     }
 
+    /// Returns the value of header `name`, ignoring case.
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
+
+    /// Returns the request cookies: those set explicitly with
+    /// [`with_cookies`](Self::with_cookies), or else parsed from the
+    /// `Cookie` header.
+    pub fn cookie_map(&self) -> HashMap<String, String> {
+        if !self.cookies.is_empty() {
+            return self.cookies.clone();
+        }
+        self.header("cookie")
+            .map(crate::ctx_helpers::parse_cookie_header)
+            .unwrap_or_default()
+    }
+
     /// Returns the Content-Type header, if present.
     pub fn content_type(&self) -> Option<&str> {
         self.headers.get("content-type").map(|s| s.as_str())

@@ -8,8 +8,101 @@
 //! returns after handling a request. Adapters can convert this to their
 //! platform-specific response format.
 
-use std::collections::HashMap;
 use serde_json::Value as JsonValue;
+use std::collections::HashMap;
+
+/// HTTP headers: ordered, case-insensitive names, repeats allowed (needed
+/// for `Set-Cookie`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Headers(Vec<(String, String)>);
+
+impl Headers {
+    /// Creates an empty header list.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns the first value for `name`, ignoring case.
+    pub fn get(&self, name: &str) -> Option<&str> {
+        self.0
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
+
+    /// Returns every value for `name`, ignoring case.
+    pub fn get_all<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a str> + 'a {
+        self.0
+            .iter()
+            .filter(move |(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
+
+    /// Returns true if a header named `name` is present.
+    pub fn contains(&self, name: &str) -> bool {
+        self.get(name).is_some()
+    }
+
+    /// Sets `name` to `value`, replacing any existing values.
+    pub fn insert(&mut self, name: impl Into<String>, value: impl Into<String>) {
+        let name = name.into();
+        self.0.retain(|(k, _)| !k.eq_ignore_ascii_case(&name));
+        self.0.push((name, value.into()));
+    }
+
+    /// Adds a value for `name`, keeping existing ones.
+    pub fn append(&mut self, name: impl Into<String>, value: impl Into<String>) {
+        self.0.push((name.into(), value.into()));
+    }
+
+    /// Removes every value for `name` and returns the first one.
+    pub fn remove(&mut self, name: &str) -> Option<String> {
+        let first = self.get(name).map(str::to_string);
+        self.0.retain(|(k, _)| !k.eq_ignore_ascii_case(name));
+        first
+    }
+
+    /// Iterates over `(name, value)` pairs in insertion order.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.0.iter().map(|(k, v)| (k.as_str(), v.as_str()))
+    }
+
+    /// Number of header values.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Returns true if there are no headers.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl From<HashMap<String, String>> for Headers {
+    fn from(map: HashMap<String, String>) -> Self {
+        Self(map.into_iter().collect())
+    }
+}
+
+impl FromIterator<(String, String)> for Headers {
+    fn from_iter<I: IntoIterator<Item = (String, String)>>(iter: I) -> Self {
+        Self(iter.into_iter().collect())
+    }
+}
+
+impl IntoIterator for Headers {
+    type Item = (String, String);
+    type IntoIter = std::vec::IntoIter<(String, String)>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl Extend<(String, String)> for Headers {
+    fn extend<I: IntoIterator<Item = (String, String)>>(&mut self, iter: I) {
+        self.0.extend(iter);
+    }
+}
 
 /// A platform-agnostic HTTP response from the Luat engine.
 ///
@@ -37,7 +130,7 @@ pub enum LuatResponse {
         /// HTTP status code
         status: u16,
         /// HTTP headers
-        headers: HashMap<String, String>,
+        headers: Headers,
         /// HTML body
         body: String,
     },
@@ -47,9 +140,20 @@ pub enum LuatResponse {
         /// HTTP status code
         status: u16,
         /// HTTP headers
-        headers: HashMap<String, String>,
+        headers: Headers,
         /// JSON body
         body: JsonValue,
+    },
+
+    /// Raw body (text, binary or pre-rendered markup from API handlers).
+    /// The `content-type` header says what it is.
+    Body {
+        /// HTTP status code
+        status: u16,
+        /// HTTP headers
+        headers: Headers,
+        /// Response body bytes
+        body: Vec<u8>,
     },
 
     /// Redirect response
@@ -58,136 +162,153 @@ pub enum LuatResponse {
         status: u16,
         /// Redirect location
         location: String,
+        /// HTTP headers (e.g. `Set-Cookie`)
+        headers: Headers,
     },
 
-    /// Error response
+    /// Error response. `message` is safe to show to clients.
     Error {
         /// HTTP status code
         status: u16,
         /// Error message
         message: String,
+        /// HTTP headers
+        headers: Headers,
     },
 }
 
 impl LuatResponse {
     /// Creates an HTML response.
     pub fn html(status: u16, body: impl Into<String>) -> Self {
-        Self::Html {
-            status,
-            headers: HashMap::new(),
-            body: body.into(),
-        }
+        Self::html_with_headers(status, body, Headers::new())
     }
 
     /// Creates an HTML response with headers.
-    pub fn html_with_headers(
-        status: u16,
-        body: impl Into<String>,
-        headers: HashMap<String, String>,
-    ) -> Self {
+    pub fn html_with_headers(status: u16, body: impl Into<String>, headers: impl Into<Headers>) -> Self {
         Self::Html {
             status,
-            headers,
+            headers: headers.into(),
             body: body.into(),
         }
     }
 
     /// Creates a JSON response.
     pub fn json(status: u16, body: JsonValue) -> Self {
-        Self::Json {
-            status,
-            headers: HashMap::new(),
-            body,
-        }
+        Self::json_with_headers(status, body, Headers::new())
     }
 
     /// Creates a JSON response with headers.
-    pub fn json_with_headers(
-        status: u16,
-        body: JsonValue,
-        headers: HashMap<String, String>,
-    ) -> Self {
+    pub fn json_with_headers(status: u16, body: JsonValue, headers: impl Into<Headers>) -> Self {
         Self::Json {
             status,
-            headers,
+            headers: headers.into(),
             body,
         }
     }
 
-    /// Creates a redirect response (HTTP 302 by default).
-    pub fn redirect(location: impl Into<String>) -> Self {
-        Self::Redirect {
-            status: 302,
-            location: location.into(),
+    /// Creates a raw-body response. Adds `content-type: text/plain` when the
+    /// headers don't name one.
+    pub fn body(status: u16, body: impl Into<Vec<u8>>, headers: impl Into<Headers>) -> Self {
+        let mut headers = headers.into();
+        if !headers.contains("content-type") {
+            headers.insert("content-type", "text/plain; charset=utf-8");
+        }
+        Self::Body {
+            status,
+            headers,
+            body: body.into(),
         }
     }
 
-    /// Creates a redirect response with a specific status code.
+    /// Creates a 302 redirect.
+    pub fn redirect(location: impl Into<String>) -> Self {
+        Self::redirect_with_status(302, location)
+    }
+
+    /// Creates a redirect with the given status.
     pub fn redirect_with_status(status: u16, location: impl Into<String>) -> Self {
         Self::Redirect {
             status,
             location: location.into(),
+            headers: Headers::new(),
         }
     }
 
-    /// Creates an error response.
+    /// Creates an error response. `message` is shown to clients.
     pub fn error(status: u16, message: impl Into<String>) -> Self {
         Self::Error {
             status,
             message: message.into(),
+            headers: Headers::new(),
         }
     }
 
-    /// Creates a 404 Not Found response.
+    /// Creates a 404 error response.
     pub fn not_found(message: impl Into<String>) -> Self {
         Self::error(404, message)
     }
 
-    /// Creates a 500 Internal Server Error response.
+    /// Creates a 500 error response.
     pub fn internal_error(message: impl Into<String>) -> Self {
         Self::error(500, message)
     }
 
-    /// Creates a 400 Bad Request response.
+    /// Creates a 400 error response.
     pub fn bad_request(message: impl Into<String>) -> Self {
         Self::error(400, message)
     }
 
-    /// Returns the status code.
+    /// Returns the HTTP status code.
     pub fn status(&self) -> u16 {
         match self {
-            Self::Html { status, .. } => *status,
-            Self::Json { status, .. } => *status,
-            Self::Redirect { status, .. } => *status,
-            Self::Error { status, .. } => *status,
+            Self::Html { status, .. }
+            | Self::Json { status, .. }
+            | Self::Body { status, .. }
+            | Self::Redirect { status, .. }
+            | Self::Error { status, .. } => *status,
         }
     }
 
-    /// Returns true if this is a success response (2xx).
-    pub fn is_success(&self) -> bool {
-        let status = self.status();
-        (200..300).contains(&status)
+    /// Returns the response headers.
+    pub fn headers(&self) -> &Headers {
+        match self {
+            Self::Html { headers, .. }
+            | Self::Json { headers, .. }
+            | Self::Body { headers, .. }
+            | Self::Redirect { headers, .. }
+            | Self::Error { headers, .. } => headers,
+        }
     }
 
-    /// Returns true if this is an error response (4xx or 5xx).
+    /// Returns the response headers mutably.
+    pub fn headers_mut(&mut self) -> &mut Headers {
+        match self {
+            Self::Html { headers, .. }
+            | Self::Json { headers, .. }
+            | Self::Body { headers, .. }
+            | Self::Redirect { headers, .. }
+            | Self::Error { headers, .. } => headers,
+        }
+    }
+
+    /// Returns true for 2xx responses.
+    pub fn is_success(&self) -> bool {
+        (200..300).contains(&self.status())
+    }
+
+    /// Returns true for 4xx and 5xx responses.
     pub fn is_error(&self) -> bool {
         self.status() >= 400
     }
 
-    /// Returns true if this is a redirect response (3xx).
+    /// Returns true for 3xx responses.
     pub fn is_redirect(&self) -> bool {
-        let status = self.status();
-        (300..400).contains(&status)
+        (300..400).contains(&self.status())
     }
 
-    /// Adds a header to the response (only for Html and Json variants).
+    /// Sets a header, replacing existing values of the same name.
     pub fn with_header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        match &mut self {
-            Self::Html { headers, .. } | Self::Json { headers, .. } => {
-                headers.insert(key.into(), value.into());
-            }
-            _ => {}
-        }
+        self.headers_mut().insert(key, value);
         self
     }
 }
@@ -201,6 +322,25 @@ impl Default for LuatResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn headers_keep_repeats_and_ignore_case() {
+        let mut h = Headers::new();
+        h.append("Set-Cookie", "a=1");
+        h.append("set-cookie", "b=2");
+        h.insert("Content-Type", "text/html");
+        h.insert("content-type", "application/json");
+        assert_eq!(h.get_all("SET-COOKIE").collect::<Vec<_>>(), ["a=1", "b=2"]);
+        assert_eq!(h.get("Content-Type"), Some("application/json"));
+        assert_eq!(h.remove("set-cookie").as_deref(), Some("a=1"));
+        assert!(!h.contains("set-cookie"));
+    }
+
+    #[test]
+    fn body_defaults_to_plain_text() {
+        let resp = LuatResponse::body(200, "hi", Headers::new());
+        assert_eq!(resp.headers().get("content-type"), Some("text/plain; charset=utf-8"));
+    }
 
     #[test]
     fn test_html_response() {
@@ -253,7 +393,7 @@ mod tests {
             .with_header("X-Custom", "value");
 
         if let LuatResponse::Html { headers, .. } = resp {
-            assert_eq!(headers.get("X-Custom"), Some(&"value".to_string()));
+            assert_eq!(headers.get("x-custom"), Some("value"));
         } else {
             panic!("Expected Html variant");
         }

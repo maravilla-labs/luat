@@ -15,7 +15,7 @@ use axum::{
     body::Body,
     extract::{Request, State, WebSocketUpgrade},
     http::{Method, StatusCode},
-    response::{Html, IntoResponse, Response},
+    response::{IntoResponse, Response},
     routing::get,
     Router,
 };
@@ -43,8 +43,8 @@ pub struct AppState {
     pub router: Option<LuatRouter>,
     /// Path to the routes directory.
     pub routes_dir: PathBuf,
-    /// The app.html template content (HTML shell).
-    pub app_html_template: Option<String>,
+    /// The HTML shell pages are rendered into (`src/app.html`).
+    pub shell: luat::AppShell,
     /// KV store manager for server-side data persistence.
     pub kv_manager: Arc<KVManager>,
 }
@@ -96,6 +96,8 @@ pub async fn create_server(
 
     // Dev mode: setup non-caching require() so modules always load fresh
     engine.setup_dev_mode()?;
+    // Dev server: show error details to the developer
+    engine.set_development_mode(true)?;
 
     // Create KV manager for server-side persistence
     let data_dir = working_dir.join(&config.routing.data_dir);
@@ -140,7 +142,7 @@ pub async fn create_server(
         config: config.clone(),
         router,
         routes_dir: templates_dir,
-        app_html_template,
+        shell: app_html_template.map(luat::AppShell::new).unwrap_or_default(),
         kv_manager,
     });
 
@@ -304,104 +306,16 @@ fn to_luat_request(
 }
 
 /// Convert LuatResponse to axum Response
-fn luat_response_to_axum(
-    response: LuatResponse,
-    state: &AppState,
-    request_headers: &HashMap<String, String>,
-) -> Response {
-    match response {
-        LuatResponse::Html { status, mut headers, body } => {
-            let is_fragment = headers.remove("x-luat-fragment").is_some()
-                || headers.remove("X-Luat-Fragment").is_some();
-
-            // Check for HTMX boosted navigation (hx-boost="true")
-            let is_htmx_boosted = request_headers
-                .get("hx-boosted")
-                .map(|v| v == "true")
-                .unwrap_or(false);
-
-            // Extract title from response headers (set by setContext("view_title", ...))
-            let title = headers
-                .remove("x-luat-title")
-                .unwrap_or_else(|| "Luat App".to_string());
-
-            // Collect head assets
-            let head_assets = collect_head_assets(&state.config);
-
-            // Wrap with app.html shell
-            let app_html = state
-                .app_html_template
-                .as_deref()
-                .unwrap_or(DEFAULT_APP_HTML);
-
-            // Decide how to render based on request type
-            let (full_html, include_livereload, extra_headers) = if is_fragment {
-                // Fragment: return body only, include title header if set
-                let mut extra = Vec::new();
-                if title != "Luat App" {
-                    extra.push(("x-luat-title".to_string(), title.clone()));
-                }
-                (body, false, extra)
-            } else if is_htmx_boosted {
-                // HTMX Boosted: return body only, add HX-Title header for document.title update
-                (body, false, vec![("HX-Title".to_string(), title)])
-            } else {
-                // Full page: wrap with app.html shell, title goes in <title> tag
-                (wrap_with_app_html(app_html, &body, &title, &head_assets), true, vec![])
-            };
-
-            let html_with_livereload = if include_livereload {
-                inject_livereload_script(&full_html)
-            } else {
-                full_html
-            };
-
-            let status_code = StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
-            let mut builder = axum::http::Response::builder().status(status_code);
-
-            // Add remaining response headers
-            for (key, value) in headers {
-                builder = builder.header(key, value);
-            }
-            // Add extra headers (HX-Title, x-luat-title for fragments)
-            for (key, value) in extra_headers {
-                builder = builder.header(key, value);
-            }
-            builder = builder.header("content-type", "text/html; charset=utf-8");
-
-            builder
-                .body(Body::from(html_with_livereload))
-                .unwrap_or_else(|_| {
-                    (StatusCode::INTERNAL_SERVER_ERROR, "Failed to build response").into_response()
-                })
-        }
-        LuatResponse::Json { status, headers, body } => {
-            let status_code = StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
-            let mut builder = axum::http::Response::builder().status(status_code);
-
-            for (key, value) in headers {
-                builder = builder.header(key, value);
-            }
-            builder = builder.header("content-type", "application/json");
-
-            builder
-                .body(Body::from(serde_json::to_string(&body).unwrap_or_default()))
-                .unwrap_or_else(|_| {
-                    (StatusCode::INTERNAL_SERVER_ERROR, "Failed to build response").into_response()
-                })
-        }
-        LuatResponse::Redirect { status, location } => {
-            let status_code = StatusCode::from_u16(status).unwrap_or(StatusCode::FOUND);
-            Response::builder()
-                .status(status_code)
-                .header("location", location)
-                .body(Body::empty())
-                .unwrap()
-        }
-        LuatResponse::Error { status: _, message } => {
-            error_page(&message)
-        }
+fn luat_response_to_axum(response: LuatResponse, state: &AppState, request: &LuatRequest) -> Response {
+    let options = luat::ShellOptions {
+        head: collect_head_assets(&state.config),
+        ..Default::default()
+    };
+    let mut http = luat::finalize(response, request, &state.shell, &options);
+    if http.document {
+        http.body = inject_livereload_script(&String::from_utf8_lossy(&http.body)).into_bytes();
     }
+    crate::server::response::to_axum(http)
 }
 
 /// Handle any route (API or page) using engine.respond()
@@ -414,15 +328,14 @@ async fn handle_route(
     // Convert CLI route to engine route
     let engine_route = cli_route_to_engine_route(route, &params, &state.routes_dir);
 
-    // Keep a reference to request headers for response handling
-    let request_headers = request.headers.clone();
-
     // Use engine.respond() for unified handling - it handles both API and page routes
     let engine = state.engine.read().await;
 
     match engine.respond_async(&engine_route, &request).await {
-        Ok(response) => luat_response_to_axum(response, state, &request_headers),
-        Err(e) => error_page(&format!("Error: {}", e)),
+        Ok(response) => luat_response_to_axum(response, state, &request),
+        // Only execution-limit errors reach here; everything else is
+        // already an error response.
+        Err(e) => crate::server::response::error(500, format!("Error: {}", e)),
     }
 }
 
@@ -448,55 +361,21 @@ async fn handle_simplified_route(state: &AppState, path: &str) -> Response {
     })) {
         Ok(ctx) => ctx,
         Err(e) => {
-            return error_page(&format!("Context error: {}", e));
+            return crate::server::response::error(500, format!("Context error: {}", e));
         }
     };
 
-    match engine.compile_entry(&template_path) {
+    let request = LuatRequest::new(path, "GET");
+    let response = match engine.compile_entry(&template_path) {
         Ok(module) => match engine.render_async(&module, &context).await {
-            Ok(body_html) => {
-                // Collect head assets
-                let head_assets = collect_head_assets(&state.config);
-
-                // Wrap with app.html shell
-                let app_html = state
-                    .app_html_template
-                    .as_deref()
-                    .unwrap_or(DEFAULT_APP_HTML);
-
-                let full_html = wrap_with_app_html(app_html, &body_html, "Luat App", &head_assets);
-                let html_with_livereload = inject_livereload_script(&full_html);
-                Html(html_with_livereload).into_response()
-            }
-            Err(e) => error_page(&format!("Render error: {}", e)),
+            Ok(body_html) => LuatResponse::html(200, body_html),
+            Err(e) => LuatResponse::error(500, format!("Render error: {}", e)),
         },
-        Err(e) => error_page(&format!("Compile error: {}", e)),
-    }
+        Err(e) => LuatResponse::error(404, format!("Compile error: {}", e)),
+    };
+    luat_response_to_axum(response, state, &request)
 }
 
-fn error_page(message: &str) -> Response {
-    Html(format!(
-        r#"<!DOCTYPE html>
-<html>
-<head>
-    <title>Error - Luat</title>
-    <style>
-        body {{ font-family: system-ui, sans-serif; padding: 2rem; background: #1a1a2e; color: #eee; }}
-        .error {{ background: #16213e; border-left: 4px solid #e94560; padding: 1rem; border-radius: 4px; }}
-        pre {{ background: #0f0f1a; padding: 1rem; overflow-x: auto; border-radius: 4px; }}
-    </style>
-</head>
-<body>
-    <h1>Error</h1>
-    <div class="error">
-        <pre>{}</pre>
-    </div>
-</body>
-</html>"#,
-        html_escape(message)
-    ))
-    .into_response()
-}
 
 /// Creates a redirect response (reserved for future use).
 #[allow(dead_code)]
@@ -508,13 +387,6 @@ fn redirect_response(url: &str) -> Response {
         .unwrap()
 }
 
-fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
-}
 
 /// Collect head assets (CSS and JS files from public directory)
 fn collect_head_assets(config: &Config) -> String {
@@ -553,33 +425,6 @@ fn collect_head_assets(config: &Config) -> String {
 }
 
 /// Wrap rendered body content with app.html shell
-fn wrap_with_app_html(
-    app_html: &str,
-    body: &str,
-    title: &str,
-    head_assets: &str,
-) -> String {
-    app_html
-        .replace("%luat.title%", title)
-        .replace("%luat.head%", head_assets)
-        .replace("%luat.body%", body)
-}
-
-/// Default app.html template when no app.html exists
-const DEFAULT_APP_HTML: &str = r#"<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>%luat.title%</title>
-    %luat.head%
-</head>
-<body>
-    %luat.body%
-</body>
-</html>
-"#;
-
 fn inject_livereload_script(html: &str) -> String {
     let script = r#"
 <script>

@@ -211,6 +211,7 @@ impl Router {
         let mut route_dirs: HashMap<String, Route> = HashMap::new();
         let mut layouts_by_dir: HashMap<String, String> = HashMap::new();
         let mut layout_servers_by_dir: HashMap<String, String> = HashMap::new();
+        let mut errors_by_dir: HashMap<String, String> = HashMap::new();
         let mut action_templates_by_dir: HashMap<String, HashMap<String, String>> = HashMap::new();
 
         // First pass: collect all files by directory
@@ -233,6 +234,8 @@ impl Router {
                 layouts_by_dir.insert(parent.clone(), path.to_string());
             } else if file_name == "+layout.server.lua" {
                 layout_servers_by_dir.insert(parent.clone(), path.to_string());
+            } else if file_name == "+error.luat" {
+                errors_by_dir.insert(parent.clone(), path.to_string());
             }
 
             // Track action templates - look for (fragments) subfolder pattern
@@ -284,6 +287,8 @@ impl Router {
                 // Collect layouts from root to this route
                 route.layouts = Self::collect_layouts(&dir, &layouts_by_dir);
                 route.layout_servers = Self::collect_layouts(&dir, &layout_servers_by_dir);
+                // The nearest +error.luat, walking up from this route.
+                route.error = Self::collect_layouts(&dir, &errors_by_dir).pop();
                 if let Some(templates) = action_templates_by_dir.get(&dir) {
                     route.action_templates = templates.clone();
                 }

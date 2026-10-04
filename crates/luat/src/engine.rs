@@ -110,11 +110,13 @@ use std::cell::RefCell;
 /// ```
 #[derive(Debug)]
 pub struct Engine<R: ResourceResolver> {
-    resolver: R,
-    cache: Box<dyn Cache>,
-    lua: Lua,
+    pub(crate) resolver: R,
+    pub(crate) cache: Box<dyn Cache>,
+    pub(crate) lua: Lua,
     /// Root path for computing relative paths in error messages
     root_path: Option<String>,
+    /// Whether error details are shown to clients (see `set_development_mode`).
+    development: std::sync::atomic::AtomicBool,
 }
 
 /// Wrapper for a Lua value to be used as template context.
@@ -353,6 +355,7 @@ impl<R: ResourceResolver> Engine<R> {
             cache,
             lua,
             root_path: None,
+            development: std::sync::atomic::AtomicBool::new(false),
         };
 
         // Setup the custom module searcher to resolve Lua modules through our resolver
@@ -881,7 +884,7 @@ impl<R: ResourceResolver> Engine<R> {
     /// Renders `module` asynchronously within a request, sharing that
     /// request's runtime (context stack and page context) with its templates.
     #[cfg(feature = "async-lua")]
-    async fn render_async_in(
+    pub(crate) async fn render_async_in(
         &self,
         module: &Module,
         context: &Value,
@@ -896,7 +899,7 @@ impl<R: ResourceResolver> Engine<R> {
 
     /// Renders `module` within a request, sharing that request's runtime with
     /// its templates.
-    fn render_in(&self, module: &Module, context: &Value, request_runtime: &Table) -> Result<String> {
+    pub(crate) fn render_in(&self, module: &Module, context: &Value, request_runtime: &Table) -> Result<String> {
         let (render_func, runtime) = self.prepare_render(module, Some(request_runtime))?;
         let result = render_func.call::<String>((self.lua.to_value(context)?, &runtime));
         result.map_err(|e| Self::translate_render_error(module, e))
@@ -1193,7 +1196,7 @@ impl<R: ResourceResolver> Engine<R> {
     }
 
     #[cfg(feature = "async-lua")]
-    async fn render_from_bundle_in(
+    pub(crate) async fn render_from_bundle_in(
         &self,
         module_name: &str,
         context: &Value,
@@ -1603,15 +1606,24 @@ _G.__bundle_debug = {
         Ok((bundle, source_map))
     }
 
-    /// Enables development mode for enhanced error messages.
+    /// Enables or disables development mode.
     ///
-    /// When enabled, errors include detailed stack traces and source context.
-    /// Recommended during development but adds some runtime overhead.
+    /// In development mode, unexpected errors are returned to clients with
+    /// their full details. Otherwise clients get "Internal Server Error" and
+    /// the details are only logged. Off by default.
     pub fn set_development_mode(&self, enabled: bool) -> Result<()> {
+        self.development
+            .store(enabled, std::sync::atomic::Ordering::Relaxed);
         // Error details come from the host side (mlua errors carry the Lua
         // traceback); guest code only sees the flag.
         self.lua.globals().set("__DEV_MODE", enabled)?;
         Ok(())
+    }
+
+    /// Whether development mode is on. Outside development mode, clients get
+    /// a generic message for unexpected errors; details are only logged.
+    pub fn is_development(&self) -> bool {
+        self.development.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Loads a bundle and extracts source map information.
@@ -1835,632 +1847,4 @@ _G.__bundle_debug = {
         &self.lua
     }
 
-    fn resolve_server_source(&self, path: &str) -> Result<String> {
-        match self.resolver.resolve("", path) {
-            Ok(resolved) => Ok(resolved.source),
-            Err(err) => {
-                if let Some(source) = self.server_source_from_bundle(path) {
-                    Ok(source)
-                } else {
-                    Err(err)
-                }
-            }
-        }
-    }
-
-    fn server_source_from_bundle(&self, path: &str) -> Option<String> {
-        let globals = self.lua.globals();
-        let server_sources: Table = globals.get("__server_sources").ok()?;
-        server_sources.get::<String>(path).ok()
-    }
-
-    fn is_action_request(
-        &self,
-        route: &crate::router::Route,
-        request: &crate::request::LuatRequest,
-    ) -> bool {
-        if route.page_server.is_none() {
-            return false;
-        }
-        if !request.method.eq_ignore_ascii_case("GET") {
-            return true;
-        }
-        request.action_name().is_some()
-    }
-
-    fn build_action_context(
-        &self,
-        request: &crate::request::LuatRequest,
-        params: &std::collections::HashMap<String, String>,
-    ) -> std::result::Result<crate::actions::ActionContext, String> {
-        use crate::body::parse_action_body;
-
-        let body = match request.body.as_ref() {
-            Some(body) => parse_action_body(body, request.content_type())
-                .map_err(|e| e.to_string())?,
-            None => serde_json::Value::Null,
-        };
-
-        let query = request
-            .query
-            .iter()
-            .filter(|(k, _)| !k.starts_with('/'))
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
-
-        let url = self.build_action_url(request);
-
-        Ok(crate::actions::ActionContext::new(&request.method, &url)
-            .with_params(params.clone())
-            .with_query(query)
-            .with_headers(request.headers.clone())
-            .with_cookies(request.cookies.clone())
-            .with_body(body)
-            .with_action(request.action_name().map(|s| s.to_string())))
-    }
-
-    fn build_action_url(&self, request: &crate::request::LuatRequest) -> String {
-        if request.query.is_empty() {
-            return request.path.clone();
-        }
-
-        let mut pairs = Vec::new();
-        for (key, value) in &request.query {
-            if value.is_empty() {
-                pairs.push(key.clone());
-            } else {
-                pairs.push(format!("{}={}", key, value));
-            }
-        }
-
-        format!("{}?{}", request.path, pairs.join("&"))
-    }
-
-    fn action_template_candidates(ctx: &crate::actions::ActionContext) -> [String; 2] {
-        let action_name = ctx.effective_action_name();
-        let method_upper = ctx.method.to_uppercase();
-        [
-            format!("{}-{}", method_upper, action_name), // "POST-delete"
-            action_name.to_string(),                      // "delete"
-        ]
-    }
-
-    fn action_template_path(
-        route: &crate::router::Route,
-        candidate: &str,
-    ) -> Option<String> {
-        // Case-insensitive lookup in action_templates map
-        // Only use templates discovered by router - no fallback
-        let candidate_upper = candidate.to_uppercase();
-        for (key, path) in &route.action_templates {
-            if key.to_uppercase() == candidate_upper {
-                return Some(path.clone());
-            }
-        }
-        None
-    }
-
-    fn is_not_found_error(&self, err: &LuatError) -> bool {
-        match err {
-            LuatError::ResolutionError(_) | LuatError::ModuleNotFound(_) => true,
-            LuatError::LuaError(lua_err) => {
-                let msg = lua_err.to_string();
-                // Match both bundle errors and Lua's standard "module not found" errors
-                msg.contains("not found in bundle") || msg.contains("not found:")
-            }
-            _ => false,
-        }
-    }
-
-    fn action_error_response(status: u16, message: impl Into<String>) -> crate::response::LuatResponse {
-        crate::response::LuatResponse::json(
-            status,
-            serde_json::json!({ "error": message.into() }),
-        )
-    }
-
-    fn action_response_to_luat(
-        &self,
-        response: crate::actions::ActionResponse,
-        rendered_html: Option<String>,
-    ) -> crate::response::LuatResponse {
-        if let Some(html) = rendered_html {
-            let mut headers = response.headers;
-            headers.insert("x-luat-fragment".to_string(), "1".to_string());
-            return crate::response::LuatResponse::html_with_headers(response.status, html, headers);
-        }
-
-        crate::response::LuatResponse::json_with_headers(response.status, response.data, response.headers)
-    }
-
-    /// Renders a template synchronously (reserved for future use).
-    #[allow(dead_code)]
-    fn render_template_sync(&self, module_path: &str, context: &Value) -> Result<String> {
-        let module = self.compile_entry(module_path)?;
-        self.render(&module, context)
-    }
-
-    fn render_action_template_sync(
-        &self,
-        route: &crate::router::Route,
-        ctx: &crate::actions::ActionContext,
-        response: &crate::actions::ActionResponse,
-    ) -> Result<Option<String>> {
-        // Find template in router-discovered action_templates (no fallback)
-        for candidate in Self::action_template_candidates(ctx) {
-            if let Some(template_path) = Self::action_template_path(route, &candidate) {
-                // Template found - load and render it
-                let context = self.to_value(&response.data)?;
-                let module = self.compile_entry(&template_path)?;
-                let html = self.render(&module, &context)?;
-                return Ok(Some(html));
-            }
-        }
-        // No template found - return None (caller will return JSON)
-        Ok(None)
-    }
-
-    #[cfg(feature = "async-lua")]
-    async fn render_template_async(
-        &self,
-        module_path: &str,
-        context: &Value,
-        request_runtime: Option<&Table>,
-    ) -> Result<String> {
-        match self.compile_entry(module_path) {
-            Ok(module) => self.render_async_in(&module, context, request_runtime).await,
-            Err(err) => {
-                if self.is_not_found_error(&err) {
-                    return self
-                        .render_from_bundle_in(module_path, context, request_runtime)
-                        .await;
-                }
-                Err(err)
-            }
-        }
-    }
-
-    #[cfg(feature = "async-lua")]
-    async fn render_action_template_async(
-        &self,
-        route: &crate::router::Route,
-        ctx: &crate::actions::ActionContext,
-        response: &crate::actions::ActionResponse,
-    ) -> Result<Option<String>> {
-        // Find template in router-discovered action_templates (no fallback)
-        for candidate in Self::action_template_candidates(ctx) {
-            if let Some(template_path) = Self::action_template_path(route, &candidate) {
-                // Template found - load and render it
-                // Use render_template_async which has fallback to bundle rendering
-                let context = self.to_value(&response.data)?;
-                let html = self.render_template_async(&template_path, &context, None).await?;
-                return Ok(Some(html));
-            }
-        }
-        // No template found - return None (caller will return JSON)
-        Ok(None)
-    }
-
-    // ============================================================================
-    // Request Handling (SvelteKit-style unified entry point)
-    // ============================================================================
-
-    /// Handles a request using a pre-matched route.
-    ///
-    /// This is the main entry point for request handling. It executes:
-    /// 1. Layout load functions (from root to current route)
-    /// 2. Page load function OR API handler
-    /// 3. Template rendering (for page routes)
-    ///
-    /// All Lua execution uses the Engine's single Lua instance, ensuring
-    /// all modules (json, KV, etc.) are available.
-    ///
-    /// # Arguments
-    ///
-    /// * `route` - The matched route from the Router
-    /// * `request` - The incoming HTTP request
-    ///
-    /// # Returns
-    ///
-    /// A `LuatResponse` containing the response to send to the client.
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// use luat::{Engine, FileSystemResolver, Router, LuatRequest};
-    ///
-    /// let resolver = FileSystemResolver::new("./routes");
-    /// let engine = Engine::with_memory_cache(resolver, 100)?;
-    ///
-    /// // Build router from route files
-    /// let router = Router::from_paths(route_files.into_iter());
-    ///
-    /// // Handle request
-    /// let request = LuatRequest::new("/blog/hello", "GET");
-    /// if let Some(route) = router.match_url(&request.path) {
-    ///     let response = engine.respond(&route, &request)?;
-    /// }
-    /// ```
-    pub fn respond(
-        &self,
-        route: &crate::router::Route,
-        request: &crate::request::LuatRequest,
-    ) -> Result<crate::response::LuatResponse> {
-        use crate::runtime::Runtime;
-
-        let runtime = Runtime::new(&self.lua);
-
-        // For API-only routes (+server.lua without +page.luat)
-        if route.is_api_route() {
-            return self.handle_api_route(&runtime, route, request);
-        }
-
-        if self.is_action_request(route, request) {
-            return self.handle_action_request_sync(route, request);
-        }
-
-        // For page routes, run load functions and render
-        self.handle_page_route(route, request)
-    }
-
-    /// Async request handler that can fall back to bundle rendering.
-    #[cfg(feature = "async-lua")]
-    pub async fn respond_async(
-        &self,
-        route: &crate::router::Route,
-        request: &crate::request::LuatRequest,
-    ) -> Result<crate::response::LuatResponse> {
-        use crate::runtime::Runtime;
-
-        let runtime = Runtime::new(&self.lua);
-
-        if route.is_api_route() {
-            return self.handle_api_route_async(&runtime, route, request).await;
-        }
-
-        if self.is_action_request(route, request) {
-            return self.handle_action_request_async(route, request).await;
-        }
-
-        self.handle_page_route_async(route, request).await
-    }
-
-    fn handle_action_request_sync(
-        &self,
-        route: &crate::router::Route,
-        request: &crate::request::LuatRequest,
-    ) -> Result<crate::response::LuatResponse> {
-        use crate::actions::ActionExecutor;
-
-        let Some(ref server_path) = route.page_server else {
-            return Ok(Self::action_error_response(405, "No server handler"));
-        };
-
-        let ctx = match self.build_action_context(request, &route.params) {
-            Ok(ctx) => ctx,
-            Err(message) => return Ok(Self::action_error_response(400, message)),
-        };
-
-        let source = match self.resolve_server_source(server_path) {
-            Ok(source) => source,
-            Err(err) => {
-                return Ok(Self::action_error_response(
-                    500,
-                    format!("Server source error: {}", err),
-                ))
-            }
-        };
-
-        let executor = ActionExecutor::new(&self.lua);
-        let response = match executor.execute(&source, server_path, &ctx) {
-            Ok(resp) => resp,
-            Err(err) => {
-                return Ok(Self::action_error_response(
-                    500,
-                    format!("Action error: {}", err),
-                ))
-            }
-        };
-
-        let rendered = match self.render_action_template_sync(route, &ctx, &response) {
-            Ok(html) => html,
-            Err(err) => {
-                return Ok(Self::action_error_response(
-                    500,
-                    format!("Action template error: {}", err),
-                ))
-            }
-        };
-
-        Ok(self.action_response_to_luat(response, rendered))
-    }
-
-    #[cfg(feature = "async-lua")]
-    async fn handle_action_request_async(
-        &self,
-        route: &crate::router::Route,
-        request: &crate::request::LuatRequest,
-    ) -> Result<crate::response::LuatResponse> {
-        use crate::actions::ActionExecutor;
-
-        let Some(ref server_path) = route.page_server else {
-            return Ok(Self::action_error_response(405, "No server handler"));
-        };
-
-        let ctx = match self.build_action_context(request, &route.params) {
-            Ok(ctx) => ctx,
-            Err(message) => return Ok(Self::action_error_response(400, message)),
-        };
-
-        let source = match self.resolve_server_source(server_path) {
-            Ok(source) => source,
-            Err(err) => {
-                return Ok(Self::action_error_response(
-                    500,
-                    format!("Server source error: {}", err),
-                ))
-            }
-        };
-
-        let executor = ActionExecutor::new(&self.lua);
-        let response = match executor.execute_async(&source, server_path, &ctx).await {
-            Ok(resp) => resp,
-            Err(err) => {
-                return Ok(Self::action_error_response(
-                    500,
-                    format!("Action error: {}", err),
-                ))
-            }
-        };
-
-        let rendered = match self
-            .render_action_template_async(route, &ctx, &response)
-            .await
-        {
-            Ok(html) => html,
-            Err(err) => {
-                return Ok(Self::action_error_response(
-                    500,
-                    format!("Action template error: {}", err),
-                ))
-            }
-        };
-
-        Ok(self.action_response_to_luat(response, rendered))
-    }
-
-    /// Handles an API-only route (+server.lua).
-    fn handle_api_route(
-        &self,
-        runtime: &crate::runtime::Runtime,
-        route: &crate::router::Route,
-        request: &crate::request::LuatRequest,
-    ) -> Result<crate::response::LuatResponse> {
-        let api_path = Self::api_path(route)?;
-        let source = self.resolve_server_source(api_path)?;
-        let api_result = runtime
-            .run_api(&source, api_path, request, &route.params)
-            .map_err(LuatError::LuaError)?;
-        Ok(Self::api_result_to_response(api_result))
-    }
-
-    /// Async variant of [`handle_api_route`](Self::handle_api_route).
-    #[cfg(feature = "async-lua")]
-    async fn handle_api_route_async(
-        &self,
-        runtime: &crate::runtime::Runtime<'_>,
-        route: &crate::router::Route,
-        request: &crate::request::LuatRequest,
-    ) -> Result<crate::response::LuatResponse> {
-        let api_path = Self::api_path(route)?;
-        let source = self.resolve_server_source(api_path)?;
-        let api_result = runtime
-            .run_api_async(&source, api_path, request, &route.params)
-            .await
-            .map_err(LuatError::LuaError)?;
-        Ok(Self::api_result_to_response(api_result))
-    }
-
-    fn api_path(route: &crate::router::Route) -> Result<&str> {
-        route.api.as_deref().ok_or_else(|| {
-            LuatError::InvalidTemplate("API route has no +server.lua".to_string())
-        })
-    }
-
-    fn api_result_to_response(api_result: crate::runtime::ApiResult) -> crate::response::LuatResponse {
-        use crate::response::LuatResponse;
-
-        if let Some(location) = api_result.headers.get("Location") {
-            return LuatResponse::redirect_with_status(api_result.status, location.clone());
-        }
-        LuatResponse::json_with_headers(api_result.status, api_result.body, api_result.headers)
-    }
-
-    /// Creates the per-request runtime table shared by a request's load
-    /// functions and templates (`context_stack`, `page_context`).
-    fn new_request_runtime(&self) -> Result<Table> {
-        let request_runtime = self.lua.create_table()?;
-        let context_stack: Table = self.lua.create_sequence_from::<Table>(vec![])?;
-        request_runtime.set("context_stack", context_stack)?;
-        // Non-scoped page context for view_title etc.
-        request_runtime.set("page_context", self.lua.create_table()?)?;
-        Ok(request_runtime)
-    }
-
-    /// Applies a load result to the merged props, or returns the redirect
-    /// response the load function asked for.
-    fn merge_load_result(
-        merged_props: &mut serde_json::Map<String, serde_json::Value>,
-        load_result: crate::runtime::LoadResult,
-    ) -> Option<crate::response::LuatResponse> {
-        if let Some(redirect) = load_result.redirect {
-            let status = load_result.status.unwrap_or(302);
-            return Some(crate::response::LuatResponse::redirect_with_status(status, redirect));
-        }
-        if let serde_json::Value::Object(props) = load_result.props {
-            merged_props.extend(props);
-        }
-        None
-    }
-
-    fn page_path(route: &crate::router::Route) -> Result<&str> {
-        route.page.as_deref().ok_or_else(|| {
-            LuatError::InvalidTemplate("Page route has no +page.luat".to_string())
-        })
-    }
-
-    /// Builds the HTML response, adding `x-luat-title` when a template or
-    /// load function set `view_title`.
-    fn page_response(&self, body: String, request_runtime: &Table) -> Result<crate::response::LuatResponse> {
-        let mut headers = std::collections::HashMap::new();
-        if let Some(title) = self.extract_view_title_from_context(request_runtime)? {
-            headers.insert("x-luat-title".to_string(), title);
-        }
-        Ok(crate::response::LuatResponse::Html {
-            status: 200,
-            headers,
-            body,
-        })
-    }
-
-    /// Handles a page route (+page.luat with optional load functions).
-    ///
-    /// Runs layout and page load functions (root to leaf), renders the page,
-    /// then wraps it in its layouts from innermost to outermost.
-    fn handle_page_route(
-        &self,
-        route: &crate::router::Route,
-        request: &crate::request::LuatRequest,
-    ) -> Result<crate::response::LuatResponse> {
-        use serde_json::Value as JsonValue;
-
-        let request_runtime = self.new_request_runtime()?;
-        let runtime = crate::runtime::Runtime::with_request_runtime(&self.lua, request_runtime.clone());
-        let mut merged_props = serde_json::Map::new();
-
-        let load_files = route.layout_servers.iter().chain(route.page_server.iter());
-        for server_path in load_files {
-            let load_result = self.run_load_file(&runtime, server_path, request, &route.params)?;
-            if let Some(redirect) = Self::merge_load_result(&mut merged_props, load_result) {
-                return Ok(redirect);
-            }
-        }
-
-        let module = self.compile_entry(Self::page_path(route)?)?;
-        let context = self.to_value(JsonValue::Object(merged_props.clone()))?;
-        let mut body_html = self.render_in(&module, &context, &request_runtime)?;
-
-        for layout_path in route.layouts.iter().rev() {
-            let mut layout_props = merged_props.clone();
-            layout_props.insert("children".to_string(), JsonValue::String(body_html));
-            let layout_context = self.to_value(JsonValue::Object(layout_props))?;
-            let layout_module = self.compile_entry(layout_path)?;
-            body_html = self.render_in(&layout_module, &layout_context, &request_runtime)?;
-        }
-
-        self.page_response(body_html, &request_runtime)
-    }
-
-    /// Extracts view_title from page_context (preferred) or context_stack (fallback).
-    fn extract_view_title_from_context(&self, runtime: &Table) -> Result<Option<String>> {
-        // First check page_context (non-scoped, takes precedence)
-        if let Ok(page_ctx) = runtime.get::<Table>("page_context") {
-            if let Ok(mlua::Value::String(s)) = page_ctx.get::<mlua::Value>("view_title") {
-                if let Ok(title) = s.to_str() {
-                    return Ok(Some(title.to_string()));
-                }
-            }
-        }
-
-        // Fall back to context_stack (for backwards compatibility)
-        let stack: Table = match runtime.get("context_stack") {
-            Ok(s) => s,
-            Err(_) => return Ok(None),
-        };
-
-        let len = stack.len().unwrap_or(0);
-        // Search from top to bottom of stack (most recent context first)
-        for i in (1..=len).rev() {
-            if let Ok(scope) = stack.get::<Table>(i) {
-                if let Ok(mlua::Value::String(s)) = scope.get::<mlua::Value>("view_title") {
-                    if let Ok(title) = s.to_str() {
-                        return Ok(Some(title.to_string()));
-                    }
-                }
-            }
-        }
-        Ok(None)
-    }
-
-    /// Async variant of [`handle_page_route`](Self::handle_page_route), with
-    /// fallback to bundle rendering.
-    #[cfg(feature = "async-lua")]
-    async fn handle_page_route_async(
-        &self,
-        route: &crate::router::Route,
-        request: &crate::request::LuatRequest,
-    ) -> Result<crate::response::LuatResponse> {
-        use serde_json::Value as JsonValue;
-
-        let request_runtime = self.new_request_runtime()?;
-        let runtime = crate::runtime::Runtime::with_request_runtime(&self.lua, request_runtime.clone());
-        let mut merged_props = serde_json::Map::new();
-
-        let load_files = route.layout_servers.iter().chain(route.page_server.iter());
-        for server_path in load_files {
-            let load_result = self
-                .run_load_file_async(&runtime, server_path, request, &route.params)
-                .await?;
-            if let Some(redirect) = Self::merge_load_result(&mut merged_props, load_result) {
-                return Ok(redirect);
-            }
-        }
-
-        let page_path = Self::page_path(route)?;
-        let context = self.to_value(JsonValue::Object(merged_props.clone()))?;
-        let mut body_html = self
-            .render_template_async(page_path, &context, Some(&request_runtime))
-            .await?;
-
-        for layout_path in route.layouts.iter().rev() {
-            let mut layout_props = merged_props.clone();
-            layout_props.insert("children".to_string(), JsonValue::String(body_html));
-            let layout_context = self.to_value(JsonValue::Object(layout_props))?;
-            body_html = self
-                .render_template_async(layout_path, &layout_context, Some(&request_runtime))
-                .await?;
-        }
-
-        self.page_response(body_html, &request_runtime)
-    }
-
-    /// Async variant of [`run_load_file`](Self::run_load_file).
-    #[cfg(feature = "async-lua")]
-    async fn run_load_file_async(
-        &self,
-        runtime: &crate::runtime::Runtime<'_>,
-        path: &str,
-        request: &crate::request::LuatRequest,
-        params: &std::collections::HashMap<String, String>,
-    ) -> Result<crate::runtime::LoadResult> {
-        let source = self.resolve_server_source(path)?;
-        runtime
-            .run_load_async(&source, path, request, params)
-            .await
-            .map_err(LuatError::LuaError)
-    }
-
-    /// Runs a load file and returns the result.
-    fn run_load_file(
-        &self,
-        runtime: &crate::runtime::Runtime,
-        path: &str,
-        request: &crate::request::LuatRequest,
-        params: &std::collections::HashMap<String, String>,
-    ) -> Result<crate::runtime::LoadResult> {
-        let source = self.resolve_server_source(path)?;
-        runtime
-            .run_load(&source, path, request, params)
-            .map_err(LuatError::LuaError)
-    }
 }

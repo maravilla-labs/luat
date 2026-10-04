@@ -41,12 +41,22 @@ use std::collections::HashMap;
 /// ```
 pub struct ActionExecutor<'lua> {
     lua: &'lua Lua,
+    cookies: crate::ctx_helpers::CookieJar,
 }
 
 impl<'lua> ActionExecutor<'lua> {
     /// Creates a new ActionExecutor with the given Lua instance.
     pub fn new(lua: &'lua Lua) -> Self {
-        Self { lua }
+        Self {
+            lua,
+            cookies: Default::default(),
+        }
+    }
+
+    /// Collects cookies set by the action into `jar`.
+    pub fn with_cookies(mut self, jar: crate::ctx_helpers::CookieJar) -> Self {
+        self.cookies = jar;
+        self
     }
 
     /// Executes an action from the given Lua source code.
@@ -211,6 +221,7 @@ impl<'lua> ActionExecutor<'lua> {
             cookies_table.set(k.as_str(), v.as_str())?;
         }
         table.set("cookies", cookies_table)?;
+        crate::ctx_helpers::install(self.lua, &table, &self.cookies)?;
 
         // Add metadata
         table.set("url", ctx.url.as_str())?;

@@ -47,11 +47,15 @@ pub struct ApiResult {
     /// HTTP status code
     pub status: u16,
 
-    /// Response body
+    /// Response body (sent as JSON unless `raw` is set)
     pub body: JsonValue,
 
+    /// Raw body, when the handler returned a string `body`. Sent as-is with
+    /// the handler's `content-type` (text/plain if it set none).
+    pub raw: Option<Vec<u8>>,
+
     /// Response headers
-    pub headers: HashMap<String, String>,
+    pub headers: crate::response::Headers,
 }
 
 impl Default for ApiResult {
@@ -59,7 +63,8 @@ impl Default for ApiResult {
         Self {
             status: 200,
             body: JsonValue::Null,
-            headers: HashMap::new(),
+            raw: None,
+            headers: crate::response::Headers::new(),
         }
     }
 }
@@ -77,7 +82,8 @@ impl ApiResult {
                 );
                 map
             }),
-            headers: HashMap::new(),
+            raw: None,
+            headers: crate::response::Headers::new(),
         }
     }
 }
@@ -92,6 +98,8 @@ pub struct Runtime<'lua> {
     /// helpers read and write. Owned by one request, never shared through
     /// globals or the registry, so interleaved requests stay separate.
     request_runtime: Option<Table>,
+    /// Collects cookies set with `ctx.setCookie` / `ctx.deleteCookie`.
+    cookies: crate::ctx_helpers::CookieJar,
 }
 
 impl<'lua> Runtime<'lua> {
@@ -102,6 +110,7 @@ impl<'lua> Runtime<'lua> {
         Self {
             lua,
             request_runtime: None,
+            cookies: Default::default(),
         }
     }
 
@@ -110,7 +119,14 @@ impl<'lua> Runtime<'lua> {
         Self {
             lua,
             request_runtime: Some(request_runtime),
+            cookies: Default::default(),
         }
+    }
+
+    /// Collects cookies set by handlers into `jar`.
+    pub fn with_cookies(mut self, jar: crate::ctx_helpers::CookieJar) -> Self {
+        self.cookies = jar;
+        self
     }
 
     /// Runs a load function from Lua source code.
@@ -253,12 +269,13 @@ impl<'lua> Runtime<'lua> {
         }
         ctx.set("headers", headers_table)?;
 
-        // Add cookies
+        // Add cookies (explicit, or parsed from the Cookie header)
         let cookies_table = self.lua.create_table()?;
-        for (key, value) in &request.cookies {
-            cookies_table.set(key.as_str(), value.as_str())?;
+        for (key, value) in request.cookie_map() {
+            cookies_table.set(key, value)?;
         }
         ctx.set("cookies", cookies_table)?;
+        crate::ctx_helpers::install(self.lua, &ctx, &self.cookies)?;
 
         // Add body/form/json
         if let Some(body) = &request.body {
@@ -381,24 +398,40 @@ impl<'lua> Runtime<'lua> {
                     result.status = status;
                 }
 
-                // Check for body
-                if let Ok(body) = table.get::<Value>("body") {
-                    result.body = self.lua_to_json(&body)?;
-                } else {
-                    // If no body key, the whole table is the body
-                    result.body = self.table_to_json_excluding(&table, &["status", "headers"])?;
+                // Check for body: a string is sent raw, anything else as JSON
+                match table.get::<Value>("body")? {
+                    Value::String(s) => result.raw = Some(s.as_bytes().to_vec()),
+                    Value::Nil => {
+                        // If no body key, the whole table is the body
+                        result.body = self.table_to_json_excluding(
+                            &table,
+                            &["status", "headers", "redirect"],
+                        )?;
+                    }
+                    body => result.body = self.lua_to_json(&body)?,
                 }
 
-                // Check for headers
+                // Check for headers; a list value sends the header repeatedly
                 if let Ok(headers) = table.get::<Table>("headers") {
-                    for (k, v) in headers.pairs::<String, String>().flatten() {
-                        result.headers.insert(k, v);
+                    for (k, v) in headers.pairs::<String, Value>().flatten() {
+                        match v {
+                            Value::Table(values) => {
+                                for v in values.sequence_values::<String>().flatten() {
+                                    result.headers.append(k.clone(), v);
+                                }
+                            }
+                            other => {
+                                if let Some(v) = other.as_string_lossy() {
+                                    result.headers.insert(k, v);
+                                }
+                            }
+                        }
                     }
                 }
 
                 // Check for redirect shorthand
                 if let Ok(redirect) = table.get::<String>("redirect") {
-                    result.headers.insert("Location".to_string(), redirect);
+                    result.headers.insert("Location", redirect);
                     if result.status == 200 {
                         result.status = 302;
                     }

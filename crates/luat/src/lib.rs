@@ -49,6 +49,8 @@ pub mod codegen;
 pub mod dependencies;
 /// Main template engine.
 pub mod engine;
+
+mod respond;
 /// Resource resolution (filesystem, memory).
 pub mod resolver;
 /// Error types and reporting.
@@ -73,6 +75,10 @@ pub mod actions;
 pub mod kv;
 /// HTTP request abstraction for the engine.
 pub mod request;
+
+pub mod ctx_helpers;
+
+pub mod app_shell;
 /// HTTP response abstraction for the engine.
 pub mod response;
 /// Shared request body parsing helpers.
@@ -109,7 +115,9 @@ pub use resolver::*;
 pub use error::*;
 pub use cache::*;
 pub use request::LuatRequest;
-pub use response::LuatResponse;
+pub use response::{Headers, LuatResponse};
+pub use ctx_helpers::{parse_cookie_header, CookieJar, HttpError};
+pub use app_shell::{finalize, AppShell, HttpResponse, ShellOptions};
 pub use router::{Route, Router};
 pub use runtime::{ApiResult, LoadResult, Runtime};
 
