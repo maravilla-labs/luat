@@ -31,8 +31,8 @@ as `name="true"`: `aria-*`, `data-*`, `draggable`, `spellcheck` and
 `class` also accepts a table: `class={{ active = isActive, big = true }}`
 renders the keys whose values are truthy.
 
-Spreads follow the same rules, and skip keys that are not valid attribute
-names (non-strings, or names with spaces, quotes, `<`, `>`, `/` or `=`).
+Spreads follow the same rules (a `nil` or `false` spread adds nothing),
+and skip keys that are not valid attribute names (non-strings, or names with spaces, quotes, `<`, `>`, `/` or `=`).
 The order of spread attributes is not specified.
 
 Attributes mixing text and expressions (`title="Hello {name}"`) are one

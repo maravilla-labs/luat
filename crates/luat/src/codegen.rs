@@ -751,7 +751,7 @@ impl LuaCodeGenerator {
                 let source_line = expr.span.line;
                 // For spreading into HTML elements, iterate and append attributes
                 self.write_line_with_source(
-                    &format!("for __k, __v in pairs({}) do", expr.content.trim()),
+                    &format!("for __k, __v in pairs(({}) or {{}}) do", expr.content.trim()),
                     source_line,
                 );
                 self.indent();
@@ -799,7 +799,7 @@ impl LuaCodeGenerator {
                 IRAttribute::Spread(expr) => {
                     let source_line = expr.span.line;
                     self.write_line_with_source(
-                        &format!("for __k, __v in pairs({}) do __component_props[__k] = __v end", expr.content.trim()),
+                        &format!("for __k, __v in pairs(({}) or {{}}) do __component_props[__k] = __v end", expr.content.trim()),
                         source_line,
                     );
                 }

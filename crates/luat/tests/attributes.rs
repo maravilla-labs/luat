@@ -96,3 +96,12 @@ fn spreads_skip_invalid_attribute_names() {
     );
     assert_eq!(html, "<p ok=\"y\">x</p>");
 }
+
+#[test]
+fn nil_spread_adds_nothing() {
+    assert_eq!(
+        render("<script>local t = nil</script><a {...t} href=\"/\">a</a>"),
+        "<a href=\"/\">a</a>"
+    );
+    assert_eq!(render("<script>local t = {}</script><a {...t.missing}>a</a>"), "<a>a</a>");
+}
