@@ -26,19 +26,17 @@
 //! futures is not interrupted here; hosts should also put a timeout around
 //! the future they poll.
 //!
-//! # Known gap: long native calls
+//! # Long native calls
 //!
-//! The hook runs between Lua instructions, so a single call into a C
-//! library function is not interrupted while it runs. Most standard library
-//! functions are linear in data that the memory limit already bounds. The
-//! exception is pattern matching (`string.find`, `match`, `gmatch`,
-//! `gsub`), whose backtracking is super-linear for failing patterns such as
-//! `.-x` over a large subject. Until those functions count their own steps,
-//! hosts serving untrusted code should run engines on threads they can
-//! abandon, and treat a missed deadline as a reason to discard the thread.
+//! The hook runs between Lua instructions, so a call into a C library
+//! function is not interrupted while it runs. Pattern matching
+//! (`string.find`, `match`, `gmatch`, `gsub`) is the one standard function
+//! whose running time is not bounded by the size of its data, so the
+//! engine replaces it with a matcher that charges its steps to the same
+//! instruction budget and deadline (see `patterns`).
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Instant;
 
@@ -110,6 +108,8 @@ struct LimitState {
     remaining: AtomicI64,
     deadline: RwLock<Option<Instant>>,
     tripped: AtomicU8,
+    /// Memory limit in bytes, 0 for none.
+    memory_bytes: AtomicUsize,
 }
 
 impl LimitState {
@@ -119,6 +119,7 @@ impl LimitState {
             remaining: AtomicI64::new(0),
             deadline: RwLock::new(None),
             tripped: AtomicU8::new(NOT_TRIPPED),
+            memory_bytes: AtomicUsize::new(0),
         }
     }
 }
@@ -194,6 +195,9 @@ pub(crate) fn apply(lua: &Lua, limits: &EngineLimits) -> Result<()> {
     }
     // mlua treats 0 as "no limit".
     lua.set_memory_limit(limits.memory_bytes.unwrap_or(0))?;
+    state
+        .memory_bytes
+        .store(limits.memory_bytes.unwrap_or(0), Ordering::Release);
     match limits.instruction_budget {
         Some(budget) => {
             state
@@ -228,29 +232,76 @@ fn check(state: *mut ffi::lua_State) -> Option<&'static [u8]> {
         Ok(map) => map.get(&key).cloned()?,
         Err(_) => return Some(INSTRUCTIONS_CMSG),
     };
+    charge(&limits, CHECK_EVERY as i64).map(message_for)
+}
 
+/// Charges `cost` instructions and checks the deadline. Returns the
+/// tripped limit, marking it so that every later check fails too.
+fn charge(limits: &LimitState, cost: i64) -> Option<u8> {
     let tripped = limits.tripped.load(Ordering::Acquire);
     if tripped != NOT_TRIPPED {
-        return Some(message_for(tripped));
+        return Some(tripped);
     }
 
     if limits.count_instructions.load(Ordering::Acquire) {
-        let before = limits.remaining.fetch_sub(CHECK_EVERY as i64, Ordering::AcqRel);
-        if before <= CHECK_EVERY as i64 {
+        let before = limits.remaining.fetch_sub(cost, Ordering::AcqRel);
+        if before <= cost {
             limits.tripped.store(TRIPPED_INSTRUCTIONS, Ordering::Release);
-            return Some(INSTRUCTIONS_CMSG);
+            return Some(TRIPPED_INSTRUCTIONS);
         }
     }
 
     let deadline = match limits.deadline.read() {
         Ok(deadline) => *deadline,
-        Err(_) => return Some(DEADLINE_CMSG),
+        Err(_) => return Some(TRIPPED_DEADLINE),
     };
     if deadline.is_some_and(|d| Instant::now() >= d) {
         limits.tripped.store(TRIPPED_DEADLINE, Ordering::Release);
-        return Some(DEADLINE_CMSG);
+        return Some(TRIPPED_DEADLINE);
     }
     None
+}
+
+/// Lets native code that runs long (the pattern matcher) charge its work
+/// to the engine's limits.
+#[derive(Debug, Clone)]
+pub(crate) struct LimitGuard(Arc<LimitState>);
+
+impl LimitGuard {
+    /// The guard of `lua`'s limit state, if limits are installed.
+    pub(crate) fn of(lua: &Lua) -> Option<Self> {
+        state_for(lua).ok().map(Self)
+    }
+
+    /// Charges `steps` units of work as instructions. Returns the error
+    /// message if a limit is (or already was) exceeded.
+    pub(crate) fn charge(&self, steps: i64) -> Option<&'static str> {
+        charge(&self.0, steps).map(|tripped| {
+            if tripped == TRIPPED_DEADLINE {
+                DEADLINE_MSG
+            } else {
+                INSTRUCTIONS_MSG
+            }
+        })
+    }
+
+    /// Bytes `lua` may still allocate under its memory limit, if any.
+    pub(crate) fn memory_headroom(&self, lua: &Lua) -> Option<usize> {
+        let limit = self.0.memory_bytes.load(Ordering::Acquire);
+        (limit != 0).then(|| limit.saturating_sub(lua.used_memory()))
+    }
+}
+
+/// Makes the hook fire on the very next instruction of the running thread,
+/// as it does after it raised a limit error itself. Native code that reports
+/// a tripped limit calls this so a guest `pcall` cannot keep running.
+pub(crate) fn halt_current_thread(lua: &Lua) {
+    // SAFETY: only sets the hook of the currently running thread.
+    let _ = unsafe {
+        lua.exec_raw::<()>((), |state| {
+            ffi::lua_sethook(state, Some(limit_hook), ffi::LUA_MASKCOUNT, 1);
+        })
+    };
 }
 
 fn message_for(tripped: u8) -> &'static [u8] {

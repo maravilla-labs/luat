@@ -92,6 +92,8 @@ pub mod runtime;
 
 mod scoped_require;
 
+mod patterns;
+
 #[cfg(not(target_arch = "wasm32"))]
 pub mod limits;
 

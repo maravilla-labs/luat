@@ -364,6 +364,8 @@ impl<R: ResourceResolver> Engine<R> {
         // created later inherits it (see limits.rs).
         #[cfg(not(target_arch = "wasm32"))]
         crate::limits::install(&engine.lua)?;
+        // Pattern functions that charge their work to those limits.
+        crate::patterns::install(&engine.lua)?;
         // Lets per-module require cache by canonical path (see scoped_require).
         engine
             .lua
