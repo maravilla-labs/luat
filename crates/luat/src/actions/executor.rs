@@ -61,29 +61,50 @@ impl<'lua> ActionExecutor<'lua> {
     ///
     /// An `ActionResponse` containing the result of the action.
     pub fn execute(&self, source: &str, path: &str, ctx: &ActionContext) -> LuaResult<ActionResponse> {
+        let handler = self.prepare(source, path, ctx)?;
+        let ctx_table = self.context_to_lua(ctx)?;
+        let result: Value = handler.call(ctx_table)?;
+        self.parse_response(result)
+    }
+
+    /// Async variant of [`execute`](Self::execute).
+    ///
+    /// The handler runs as a coroutine, so it may call async host functions.
+    #[cfg(feature = "async-lua")]
+    pub async fn execute_async(
+        &self,
+        source: &str,
+        path: &str,
+        ctx: &ActionContext,
+    ) -> LuaResult<ActionResponse> {
+        let handler = self.prepare(source, path, ctx)?;
+        let ctx_table = self.context_to_lua(ctx)?;
+        let result: Value = handler.call_async(ctx_table).await?;
+        self.parse_response(result)
+    }
+
+    /// Loads the server file into a fresh environment (inheriting globals) and
+    /// resolves the handler for this request.
+    fn prepare(&self, source: &str, path: &str, ctx: &ActionContext) -> LuaResult<Function> {
         // Set current module path so require() can resolve relative paths
-        // This enables the resolver searcher in engine.rs to find modules
         self.lua.set_named_registry_value("__luat_current_module", path)?;
         let globals = self.lua.globals();
         let _ = globals.set("__luat_current_module", path);
 
-        // Register the fail() helper function
         self.register_fail_helper()?;
 
-        // Load and execute the server file with proper chunk name for error reporting
-        self.lua.load(source).set_name(path).exec()?;
+        let env = self.lua.create_table()?;
+        let mt = self.lua.create_table()?;
+        mt.set("__index", globals)?;
+        env.set_metatable(Some(mt));
 
-        // Find the appropriate handler
-        let handler = self.find_handler(ctx)?;
+        self.lua
+            .load(source)
+            .set_name(path)
+            .set_environment(env.clone())
+            .exec()?;
 
-        // Create context table for Lua
-        let ctx_table = self.context_to_lua(ctx)?;
-
-        // Call the handler
-        let result: Value = handler.call(ctx_table)?;
-
-        // Parse the response
-        self.parse_response(result)
+        self.find_handler(&env, ctx)
     }
 
     /// Registers the `fail()` helper function in Lua globals.
@@ -120,13 +141,12 @@ impl<'lua> ActionExecutor<'lua> {
     /// 2. Named action function: `actions.{name}` (e.g., `actions.login`)
     /// 3. Default action with method: `actions.default.{method}`
     /// 4. Default action function: `actions.default`
-    fn find_handler(&self, ctx: &ActionContext) -> LuaResult<Function> {
-        let globals = self.lua.globals();
+    fn find_handler(&self, env: &Table, ctx: &ActionContext) -> LuaResult<Function> {
         let method = ctx.method.to_lowercase();
         let action_name = ctx.effective_action_name();
 
         // Get the actions table
-        let actions_table: Table = globals.get("actions").map_err(|_| {
+        let actions_table: Table = env.get("actions").map_err(|_| {
             mlua::Error::runtime("No 'actions' table found in server file")
         })?;
 

@@ -26,177 +26,127 @@
 
 use mlua::{Lua, Result as LuaResult, Table};
 use std::collections::HashMap;
+use std::time::Duration;
+
+/// Default per-request timeout when the caller doesn't pass `timeout`.
+const DEFAULT_TIMEOUT_SECS: u64 = 30;
 
 /// Register the http module on the given Lua instance.
 ///
 /// This makes `http.get()`, `http.post()`, `http.put()`, `http.delete()`,
-/// and `http.request()` available in Lua code.
+/// `http.patch()` and `http.request()` available in Lua code, both as the
+/// global `http` and via `require("http")`.
+///
+/// The functions are async: they suspend the calling coroutine instead of
+/// blocking the thread, so they must be called from code the engine runs
+/// asynchronously (`Engine::respond_async`).
 pub fn register_http_module(lua: &Lua) -> LuaResult<()> {
+    let client = reqwest::Client::builder()
+        .build()
+        .map_err(|e| mlua::Error::external(format!("Failed to create HTTP client: {}", e)))?;
+
     let http_module = lua.create_table()?;
-
-    // GET request
-    let get_fn = lua.create_function(|lua, args: (String, Option<Table>)| {
-        let (url, options) = args;
-        make_request(lua, "GET", &url, options)
-    })?;
-    http_module.set("get", get_fn)?;
-
-    // POST request
-    let post_fn = lua.create_function(|lua, args: (String, Option<Table>)| {
-        let (url, options) = args;
-        make_request(lua, "POST", &url, options)
-    })?;
-    http_module.set("post", post_fn)?;
-
-    // PUT request
-    let put_fn = lua.create_function(|lua, args: (String, Option<Table>)| {
-        let (url, options) = args;
-        make_request(lua, "PUT", &url, options)
-    })?;
-    http_module.set("put", put_fn)?;
-
-    // DELETE request
-    let delete_fn = lua.create_function(|lua, args: (String, Option<Table>)| {
-        let (url, options) = args;
-        make_request(lua, "DELETE", &url, options)
-    })?;
-    http_module.set("delete", delete_fn)?;
-
-    // PATCH request
-    let patch_fn = lua.create_function(|lua, args: (String, Option<Table>)| {
-        let (url, options) = args;
-        make_request(lua, "PATCH", &url, options)
-    })?;
-    http_module.set("patch", patch_fn)?;
-
-    // Generic request
-    let request_fn = lua.create_function(|lua, options: Table| {
-        let method: String = options.get("method").unwrap_or_else(|_| "GET".to_string());
-        let url: String = options.get("url").map_err(|_| {
-            mlua::Error::external("http.request requires 'url' field")
+    for method in ["GET", "POST", "PUT", "DELETE", "PATCH"] {
+        let client = client.clone();
+        let func = lua.create_async_function(move |lua, (url, options): (String, Option<Table>)| {
+            let client = client.clone();
+            async move {
+                let request = RequestSpec::from_options(method, url, options.as_ref())?;
+                send(&lua, &client, request).await
+            }
         })?;
-        make_request(lua, &method, &url, Some(options))
+        http_module.set(method.to_lowercase(), func)?;
+    }
+
+    let request_fn = lua.create_async_function(move |lua, options: Table| {
+        let client = client.clone();
+        async move {
+            let method: String = options.get("method").unwrap_or_else(|_| "GET".to_string());
+            let url: String = options
+                .get("url")
+                .map_err(|_| mlua::Error::external("http.request requires 'url' field"))?;
+            let request = RequestSpec::from_options(&method, url, Some(&options))?;
+            send(&lua, &client, request).await
+        }
     })?;
     http_module.set("request", request_fn)?;
 
-    // Register as global 'http'
     let globals = lua.globals();
     globals.set("http", http_module.clone())?;
 
-    // Also register in package.preload for require("http")
+    // require("http") returns the same table as the global.
     let package: Table = globals.get("package")?;
     let preload: Table = package.get("preload")?;
-
-    let http_loader = lua.create_function(move |lua, _: ()| {
-        let module = lua.create_table()?;
-
-        let get_fn = lua.create_function(|lua, args: (String, Option<Table>)| {
-            let (url, options) = args;
-            make_request(lua, "GET", &url, options)
-        })?;
-        module.set("get", get_fn)?;
-
-        let post_fn = lua.create_function(|lua, args: (String, Option<Table>)| {
-            let (url, options) = args;
-            make_request(lua, "POST", &url, options)
-        })?;
-        module.set("post", post_fn)?;
-
-        let put_fn = lua.create_function(|lua, args: (String, Option<Table>)| {
-            let (url, options) = args;
-            make_request(lua, "PUT", &url, options)
-        })?;
-        module.set("put", put_fn)?;
-
-        let delete_fn = lua.create_function(|lua, args: (String, Option<Table>)| {
-            let (url, options) = args;
-            make_request(lua, "DELETE", &url, options)
-        })?;
-        module.set("delete", delete_fn)?;
-
-        let patch_fn = lua.create_function(|lua, args: (String, Option<Table>)| {
-            let (url, options) = args;
-            make_request(lua, "PATCH", &url, options)
-        })?;
-        module.set("patch", patch_fn)?;
-
-        let request_fn = lua.create_function(|lua, options: Table| {
-            let method: String = options.get("method").unwrap_or_else(|_| "GET".to_string());
-            let url: String = options.get("url").map_err(|_| {
-                mlua::Error::external("http.request requires 'url' field")
-            })?;
-            make_request(lua, &method, &url, Some(options))
-        })?;
-        module.set("request", request_fn)?;
-
-        Ok(module)
-    })?;
-    preload.set("http", http_loader)?;
+    let loader = lua.create_function(move |_, _: ()| Ok(http_module.clone()))?;
+    preload.set("http", loader)?;
 
     Ok(())
 }
 
-/// Make an HTTP request and return the response as a Lua table.
-fn make_request(lua: &Lua, method: &str, url: &str, options: Option<Table>) -> LuaResult<Table> {
-    // Extract options
-    let mut headers_map: HashMap<String, String> = HashMap::new();
-    let mut body: Option<String> = None;
-    let mut timeout_secs: Option<u64> = None;
+/// A request extracted from Lua arguments, owned so it can cross an await.
+struct RequestSpec {
+    method: reqwest::Method,
+    url: String,
+    headers: HashMap<String, String>,
+    body: Option<String>,
+    timeout: Duration,
+}
 
-    if let Some(ref opts) = options {
-        // Extract headers
-        if let Ok(headers_table) = opts.get::<Table>("headers") {
-            for (k, v) in headers_table.pairs::<String, String>().flatten() {
-                headers_map.insert(k, v);
+impl RequestSpec {
+    fn from_options(method: &str, url: String, options: Option<&Table>) -> LuaResult<Self> {
+        let method = match method.to_uppercase().as_str() {
+            "GET" => reqwest::Method::GET,
+            "POST" => reqwest::Method::POST,
+            "PUT" => reqwest::Method::PUT,
+            "DELETE" => reqwest::Method::DELETE,
+            "PATCH" => reqwest::Method::PATCH,
+            "HEAD" => reqwest::Method::HEAD,
+            other => {
+                return Err(mlua::Error::external(format!("Unsupported HTTP method: {}", other)))
             }
+        };
+
+        let mut headers = HashMap::new();
+        let mut body = None;
+        let mut timeout_secs = DEFAULT_TIMEOUT_SECS;
+        if let Some(opts) = options {
+            if let Ok(headers_table) = opts.get::<Table>("headers") {
+                headers.extend(headers_table.pairs::<String, String>().flatten());
+            }
+            body = opts.get::<String>("body").ok();
+            timeout_secs = opts.get::<u64>("timeout").unwrap_or(DEFAULT_TIMEOUT_SECS);
         }
 
-        // Extract body
-        body = opts.get::<String>("body").ok();
+        Ok(Self {
+            method,
+            url,
+            headers,
+            body,
+            timeout: Duration::from_secs(timeout_secs),
+        })
+    }
+}
 
-        // Extract timeout
-        timeout_secs = opts.get::<u64>("timeout").ok();
+/// Sends the request and returns the response as a Lua table with
+/// `status`, `ok`, `headers` and `body`.
+async fn send(lua: &Lua, client: &reqwest::Client, spec: RequestSpec) -> LuaResult<Table> {
+    let mut builder = client.request(spec.method, &spec.url).timeout(spec.timeout);
+    for (key, value) in &spec.headers {
+        builder = builder.header(key, value);
+    }
+    if let Some(body) = spec.body {
+        builder = builder.body(body);
     }
 
-    // Build the request
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(timeout_secs.unwrap_or(30)))
-        .build()
-        .map_err(|e| mlua::Error::external(format!("Failed to create HTTP client: {}", e)))?;
-
-    let mut request_builder = match method.to_uppercase().as_str() {
-        "GET" => client.get(url),
-        "POST" => client.post(url),
-        "PUT" => client.put(url),
-        "DELETE" => client.delete(url),
-        "PATCH" => client.patch(url),
-        "HEAD" => client.head(url),
-        _ => return Err(mlua::Error::external(format!("Unsupported HTTP method: {}", method))),
-    };
-
-    // Add headers
-    for (key, value) in headers_map {
-        request_builder = request_builder.header(&key, &value);
-    }
-
-    // Add body
-    if let Some(body_str) = body {
-        request_builder = request_builder.body(body_str);
-    }
-
-    // Execute request
-    let response = request_builder
+    let response = builder
         .send()
+        .await
         .map_err(|e| mlua::Error::external(format!("HTTP request failed: {}", e)))?;
 
-    // Build response table
     let result = lua.create_table()?;
-
-    // Status code
     result.set("status", response.status().as_u16())?;
     result.set("ok", response.status().is_success())?;
 
-    // Response headers
     let response_headers = lua.create_table()?;
     for (key, value) in response.headers() {
         if let Ok(v) = value.to_str() {
@@ -205,9 +155,9 @@ fn make_request(lua: &Lua, method: &str, url: &str, options: Option<Table>) -> L
     }
     result.set("headers", response_headers)?;
 
-    // Response body
     let body_text = response
         .text()
+        .await
         .map_err(|e| mlua::Error::external(format!("Failed to read response body: {}", e)))?;
     result.set("body", body_text)?;
 

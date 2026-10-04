@@ -453,7 +453,7 @@ async fn handle_simplified_route(state: &AppState, path: &str) -> Response {
     };
 
     match engine.compile_entry(&template_path) {
-        Ok(module) => match engine.render(&module, &context) {
+        Ok(module) => match engine.render_async(&module, &context).await {
             Ok(body_html) => {
                 // Collect head assets
                 let head_assets = collect_head_assets(&state.config);

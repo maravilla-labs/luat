@@ -115,45 +115,31 @@ impl<'lua> Runtime<'lua> {
         request: &LuatRequest,
         params: &HashMap<String, String>,
     ) -> LuaResult<LoadResult> {
-        // Set current module path so require() can resolve relative paths
-        // This enables the resolver searcher in engine.rs to find modules
-        self.lua.set_named_registry_value("__luat_current_module", name)?;
-        let globals = self.lua.globals();
-        let _ = globals.set("__luat_current_module", name);
-
-        // Create an environment table that inherits from globals
-        // This allows us to detect user-defined functions without
-        // confusing them with built-in functions
-        let globals = self.lua.globals();
-        let env = self.lua.create_table()?;
-
-        // Set metatable so env inherits from globals
-        let mt = self.lua.create_table()?;
-        mt.set("__index", globals.clone())?;
-        env.set_metatable(Some(mt));
-
-        // Execute the source in our custom environment
-        self.lua
-            .load(source)
-            .set_name(name)
-            .set_environment(env.clone())
-            .exec()?;
-
-        // Now check for load function in our env (not inherited from globals)
-        let load_fn: Option<Function> = env.raw_get("load").ok();
-
-        let Some(load_fn) = load_fn else {
-            // No load function defined in this source
+        let Some(load_fn) = self.prepare_handler(source, name, "load")? else {
             return Ok(LoadResult::default());
         };
-
-        // Create context table for Lua
         let ctx_table = self.create_context_table(request, params)?;
-
-        // Call the load function
         let result: Value = load_fn.call(ctx_table)?;
+        self.parse_load_result(result)
+    }
 
-        // Parse the result
+    /// Async variant of [`run_load`](Self::run_load).
+    ///
+    /// The load function runs as a coroutine, so it may call async host
+    /// functions registered with `Lua::create_async_function`.
+    #[cfg(feature = "async-lua")]
+    pub async fn run_load_async(
+        &self,
+        source: &str,
+        name: &str,
+        request: &LuatRequest,
+        params: &HashMap<String, String>,
+    ) -> LuaResult<LoadResult> {
+        let Some(load_fn) = self.prepare_handler(source, name, "load")? else {
+            return Ok(LoadResult::default());
+        };
+        let ctx_table = self.create_context_table(request, params)?;
+        let result: Value = load_fn.call_async(ctx_table).await?;
         self.parse_load_result(result)
     }
 
@@ -176,44 +162,54 @@ impl<'lua> Runtime<'lua> {
         request: &LuatRequest,
         params: &HashMap<String, String>,
     ) -> LuaResult<ApiResult> {
+        let Some(handler_fn) = self.prepare_handler(source, name, &request.method)? else {
+            return Ok(ApiResult::method_not_allowed(&request.method));
+        };
+        let ctx_table = self.create_context_table(request, params)?;
+        let result: Value = handler_fn.call(ctx_table)?;
+        self.parse_api_result(result)
+    }
+
+    /// Async variant of [`run_api`](Self::run_api).
+    #[cfg(feature = "async-lua")]
+    pub async fn run_api_async(
+        &self,
+        source: &str,
+        name: &str,
+        request: &LuatRequest,
+        params: &HashMap<String, String>,
+    ) -> LuaResult<ApiResult> {
+        let Some(handler_fn) = self.prepare_handler(source, name, &request.method)? else {
+            return Ok(ApiResult::method_not_allowed(&request.method));
+        };
+        let ctx_table = self.create_context_table(request, params)?;
+        let result: Value = handler_fn.call_async(ctx_table).await?;
+        self.parse_api_result(result)
+    }
+
+    /// Executes `source` in a fresh environment that inherits from globals and
+    /// returns the function it defined under `fn_name`, if any.
+    ///
+    /// Using a per-call environment keeps user definitions (`load`, `GET`, …)
+    /// out of `_G`, so one route's handlers never leak into another's.
+    fn prepare_handler(&self, source: &str, name: &str, fn_name: &str) -> LuaResult<Option<Function>> {
         // Set current module path so require() can resolve relative paths
-        // This enables the resolver searcher in engine.rs to find modules
         self.lua.set_named_registry_value("__luat_current_module", name)?;
         let globals = self.lua.globals();
         let _ = globals.set("__luat_current_module", name);
 
-        // Create an environment table that inherits from globals
-        let globals = self.lua.globals();
         let env = self.lua.create_table()?;
-
-        // Set metatable so env inherits from globals
         let mt = self.lua.create_table()?;
-        mt.set("__index", globals.clone())?;
+        mt.set("__index", globals)?;
         env.set_metatable(Some(mt));
 
-        // Execute the source in our custom environment
         self.lua
             .load(source)
             .set_name(name)
             .set_environment(env.clone())
             .exec()?;
 
-        // Get the handler function based on method
-        let method = &request.method;
-        let handler_fn: Option<Function> = env.raw_get(method.as_str()).ok();
-
-        let Some(handler_fn) = handler_fn else {
-            return Ok(ApiResult::method_not_allowed(method));
-        };
-
-        // Create context table for Lua
-        let ctx_table = self.create_context_table(request, params)?;
-
-        // Call the handler function
-        let result: Value = handler_fn.call(ctx_table)?;
-
-        // Parse the result
-        self.parse_api_result(result)
+        env.raw_get::<Option<Function>>(fn_name)
     }
 
     /// Creates a Lua context table from a request.

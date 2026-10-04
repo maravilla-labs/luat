@@ -793,6 +793,45 @@ impl<R: ResourceResolver> Engine<R> {
     /// assert!(html.contains("Hello, World"));
     /// ```
     pub fn render(&self, module: &Module, context: &Value) -> Result<String> {
+        let (render_func, runtime) = self.prepare_render(module)?;
+        let result = render_func.call::<String>((self.lua.to_value(context)?, &runtime));
+        result.map_err(|e| Self::translate_render_error(module, e))
+    }
+
+    /// Async variant of [`render`](Self::render).
+    ///
+    /// The template runs as a coroutine, so code it calls may use async host
+    /// functions.
+    #[cfg(feature = "async-lua")]
+    pub async fn render_async(&self, module: &Module, context: &Value) -> Result<String> {
+        let (render_func, runtime) = self.prepare_render(module)?;
+        let result = render_func
+            .call_async::<String>((self.lua.to_value(context)?, &runtime))
+            .await;
+        result.map_err(|e| Self::translate_render_error(module, e))
+    }
+
+    /// Maps a Lua error from a render call to a template error, translating
+    /// line numbers through the module's source map when one is available.
+    fn translate_render_error(module: &Module, e: mlua::Error) -> LuatError {
+        if let Some(source_map) = &module.source_map {
+            let original_msg = e.to_string();
+            let translated_msg = source_map.translate_error(&original_msg);
+            if translated_msg != original_msg {
+                return LuatError::TemplateRuntimeError {
+                    template: module.path.clone().unwrap_or_else(|| module.name.clone()),
+                    message: translated_msg,
+                    lua_traceback: None,
+                    source_context: None,
+                };
+            }
+        }
+        LuatError::LuaError(e)
+    }
+
+    /// Loads a module's dependencies and the module itself, returning its
+    /// `render` function and the request runtime table to call it with.
+    fn prepare_render(&self, module: &Module) -> Result<(mlua::Function, Table)> {
         // First, ensure all dependencies are loaded recursively
         //println!("DEBUG: Loading dependencies for module: {}", module.name);
         if !module.dependencies.is_empty() {
@@ -872,25 +911,9 @@ impl<R: ResourceResolver> Engine<R> {
 
         let chunk = self.lua.load(&module.lua_code);
         let chunk = chunk.set_name(format!("@{}", self.make_relative_path(&module_path)));
-        let lua_func = match chunk.eval::<Table>() {
-            Ok(f) => f,
-            Err(e) => {
-                // Translate error line numbers using source map if available
-                if let Some(source_map) = &module.source_map {
-                    let original_msg = e.to_string();
-                    let translated_msg = source_map.translate_error(&original_msg);
-                    if translated_msg != original_msg {
-                        return Err(LuatError::TemplateRuntimeError {
-                            template: module.path.clone().unwrap_or_else(|| module.name.clone()),
-                            message: translated_msg,
-                            lua_traceback: None,
-                            source_context: None,
-                        });
-                    }
-                }
-                return Err(LuatError::LuaError(e));
-            }
-        };
+        let lua_func = chunk
+            .eval::<Table>()
+            .map_err(|e| Self::translate_render_error(module, e))?;
 
         // Check if the module has a render function
         if !lua_func.contains_key("render")? {
@@ -915,29 +938,7 @@ impl<R: ResourceResolver> Engine<R> {
             }
         };
 
-        // Call render function with both context and runtime
-        let result: String = match render_func.call((self.lua.to_value(context)?, &runtime)) {
-            Ok(r) => r,
-            Err(e) => {
-                // Translate error line numbers using source map if available
-                if let Some(source_map) = &module.source_map {
-                    let original_msg = e.to_string();
-                    let translated_msg = source_map.translate_error(&original_msg);
-                    if translated_msg != original_msg {
-                        // Return custom error with translated line numbers
-                        return Err(LuatError::TemplateRuntimeError {
-                            template: module.path.clone().unwrap_or_else(|| module.name.clone()),
-                            message: translated_msg,
-                            lua_traceback: None,
-                            source_context: None,
-                        });
-                    }
-                }
-                return Err(LuatError::LuaError(e));
-            }
-        };
-
-        Ok(result)
+        Ok((render_func, runtime))
     }
 
     /// Load a dependency module and make it available to Lua
@@ -1887,7 +1888,7 @@ _G.__bundle_debug = {
     #[cfg(feature = "async-lua")]
     async fn render_template_async(&self, module_path: &str, context: &Value) -> Result<String> {
         match self.compile_entry(module_path) {
-            Ok(module) => self.render(&module, context),
+            Ok(module) => self.render_async(&module, context).await,
             Err(err) => {
                 if self.is_not_found_error(&err) {
                     return self.render_from_bundle(module_path, context).await;
@@ -1992,7 +1993,7 @@ _G.__bundle_debug = {
         let runtime = Runtime::new(&self.lua);
 
         if route.is_api_route() {
-            return self.handle_api_route(&runtime, route, request);
+            return self.handle_api_route_async(&runtime, route, request).await;
         }
 
         if self.is_action_request(route, request) {
@@ -2080,7 +2081,7 @@ _G.__bundle_debug = {
         };
 
         let executor = ActionExecutor::new(&self.lua);
-        let response = match executor.execute(&source, server_path, &ctx) {
+        let response = match executor.execute_async(&source, server_path, &ctx).await {
             Ok(resp) => resp,
             Err(err) => {
                 return Ok(Self::action_error_response(
@@ -2113,34 +2114,44 @@ _G.__bundle_debug = {
         route: &crate::router::Route,
         request: &crate::request::LuatRequest,
     ) -> Result<crate::response::LuatResponse> {
-        use crate::response::LuatResponse;
-
-        let api_path = route.api.as_ref().ok_or_else(|| {
-            LuatError::InvalidTemplate("API route has no +server.lua".to_string())
-        })?;
-
-        // Load the API handler source
+        let api_path = Self::api_path(route)?;
         let source = self.resolve_server_source(api_path)?;
-
-        // Run the API handler
         let api_result = runtime
             .run_api(&source, api_path, request, &route.params)
             .map_err(LuatError::LuaError)?;
+        Ok(Self::api_result_to_response(api_result))
+    }
 
-        // Check for redirect
+    /// Async variant of [`handle_api_route`](Self::handle_api_route).
+    #[cfg(feature = "async-lua")]
+    async fn handle_api_route_async(
+        &self,
+        runtime: &crate::runtime::Runtime<'_>,
+        route: &crate::router::Route,
+        request: &crate::request::LuatRequest,
+    ) -> Result<crate::response::LuatResponse> {
+        let api_path = Self::api_path(route)?;
+        let source = self.resolve_server_source(api_path)?;
+        let api_result = runtime
+            .run_api_async(&source, api_path, request, &route.params)
+            .await
+            .map_err(LuatError::LuaError)?;
+        Ok(Self::api_result_to_response(api_result))
+    }
+
+    fn api_path(route: &crate::router::Route) -> Result<&str> {
+        route.api.as_deref().ok_or_else(|| {
+            LuatError::InvalidTemplate("API route has no +server.lua".to_string())
+        })
+    }
+
+    fn api_result_to_response(api_result: crate::runtime::ApiResult) -> crate::response::LuatResponse {
+        use crate::response::LuatResponse;
+
         if let Some(location) = api_result.headers.get("Location") {
-            return Ok(LuatResponse::redirect_with_status(
-                api_result.status,
-                location.clone(),
-            ));
+            return LuatResponse::redirect_with_status(api_result.status, location.clone());
         }
-
-        // Return JSON response
-        Ok(LuatResponse::json_with_headers(
-            api_result.status,
-            api_result.body,
-            api_result.headers,
-        ))
+        LuatResponse::json_with_headers(api_result.status, api_result.body, api_result.headers)
     }
 
     /// Handles a page route (+page.luat with optional load functions).
@@ -2298,7 +2309,7 @@ _G.__bundle_debug = {
         let mut merged_props = serde_json::Map::new();
 
         for layout_server_path in &route.layout_servers {
-            let load_result = self.run_load_file(runtime, layout_server_path, request, &route.params)?;
+            let load_result = self.run_load_file_async(runtime, layout_server_path, request, &route.params).await?;
 
             if let Some(redirect) = load_result.redirect {
                 let status = load_result.status.unwrap_or(302);
@@ -2313,7 +2324,7 @@ _G.__bundle_debug = {
         }
 
         if let Some(ref page_server_path) = route.page_server {
-            let load_result = self.run_load_file(runtime, page_server_path, request, &route.params)?;
+            let load_result = self.run_load_file_async(runtime, page_server_path, request, &route.params).await?;
 
             if let Some(redirect) = load_result.redirect {
                 let status = load_result.status.unwrap_or(302);
@@ -2359,6 +2370,22 @@ _G.__bundle_debug = {
             headers,
             body: body_html,
         })
+    }
+
+    /// Async variant of [`run_load_file`](Self::run_load_file).
+    #[cfg(feature = "async-lua")]
+    async fn run_load_file_async(
+        &self,
+        runtime: &crate::runtime::Runtime<'_>,
+        path: &str,
+        request: &crate::request::LuatRequest,
+        params: &std::collections::HashMap<String, String>,
+    ) -> Result<crate::runtime::LoadResult> {
+        let source = self.resolve_server_source(path)?;
+        runtime
+            .run_load_async(&source, path, request, params)
+            .await
+            .map_err(LuatError::LuaError)
     }
 
     /// Runs a load file and returns the result.
