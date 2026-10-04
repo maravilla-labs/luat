@@ -179,15 +179,27 @@ fn transform_nodes(
     components: &mut HashSet<String>,
     in_block: bool,
 ) -> Result<Vec<IRNode>> {
+    let is_blank = |n: &Node| matches!(n, Node::TextNode { content } if content.trim().is_empty());
+    let first_content = nodes.iter().position(|n| !is_blank(n));
+    let last_content = nodes.iter().rposition(|n| !is_blank(n));
+
     let mut ir_nodes = Vec::new();
-    
-    for node in nodes {
+    for (i, node) in nodes.into_iter().enumerate() {
+        // Whitespace between two pieces of content is significant
+        // (`{first} {last}` must keep its space); it collapses to a single
+        // space. Leading and trailing whitespace is dropped.
+        if is_blank(&node) {
+            let between = matches!((first_content, last_content), (Some(f), Some(l)) if f < i && i < l);
+            if between {
+                ir_nodes.push(IRNode::TextNode { content: " ".to_string() });
+            }
+            continue;
+        }
         if let Some(ir_node) = transform_node(node, components, in_block)? {
             ir_nodes.push(ir_node);
         }
-        // Skip empty nodes (None case)
     }
-    
+
     Ok(ir_nodes)
 }
 
