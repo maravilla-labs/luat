@@ -88,12 +88,29 @@ impl ApiResult {
 /// using a shared Lua instance.
 pub struct Runtime<'lua> {
     lua: &'lua Lua,
+    /// Per-request state (`context_stack`, `page_context`) that the `ctx`
+    /// helpers read and write. Owned by one request, never shared through
+    /// globals or the registry, so interleaved requests stay separate.
+    request_runtime: Option<Table>,
 }
 
 impl<'lua> Runtime<'lua> {
     /// Creates a new runtime with the given Lua instance.
+    ///
+    /// Without a request runtime, `ctx.setContext` and friends are no-ops.
     pub fn new(lua: &'lua Lua) -> Self {
-        Self { lua }
+        Self {
+            lua,
+            request_runtime: None,
+        }
+    }
+
+    /// Creates a runtime whose `ctx` helpers operate on `request_runtime`.
+    pub fn with_request_runtime(lua: &'lua Lua, request_runtime: Table) -> Self {
+        Self {
+            lua,
+            request_runtime: Some(request_runtime),
+        }
     }
 
     /// Runs a load function from Lua source code.
@@ -193,16 +210,7 @@ impl<'lua> Runtime<'lua> {
     /// Using a per-call environment keeps user definitions (`load`, `GET`, …)
     /// out of `_G`, so one route's handlers never leak into another's.
     fn prepare_handler(&self, source: &str, name: &str, fn_name: &str) -> LuaResult<Option<Function>> {
-        // Set current module path so require() can resolve relative paths
-        self.lua.set_named_registry_value("__luat_current_module", name)?;
-        let globals = self.lua.globals();
-        let _ = globals.set("__luat_current_module", name);
-
-        let env = self.lua.create_table()?;
-        let mt = self.lua.create_table()?;
-        mt.set("__index", globals)?;
-        env.set_metatable(Some(mt));
-
+        let env = crate::scoped_require::handler_env(self.lua, name)?;
         self.lua
             .load(source)
             .set_name(name)
@@ -273,41 +281,34 @@ impl<'lua> Runtime<'lua> {
             ctx.set("json", empty)?;
         }
 
-        // Add setContext/getContext functions that operate on the shared request runtime
-        // This allows loaders to set view_title and other context values
-        let set_context = self.lua.create_function(|lua, (key, value): (String, Value)| {
-            // Get the shared request runtime from registry
-            if let Ok(runtime) = lua.named_registry_value::<Table>("__luat_request_runtime") {
-                if let Ok(stack) = runtime.get::<Table>("context_stack") {
-                    // Ensure there's at least one scope on the stack
-                    let len = stack.len().unwrap_or(0);
-                    let scope = if len == 0 {
-                        // Create initial scope if none exists
-                        let new_scope = lua.create_table()?;
-                        stack.push(new_scope.clone())?;
-                        new_scope
-                    } else {
-                        stack.get::<Table>(len)?
-                    };
-                    scope.set(key, value)?;
-                }
-            }
-            Ok(())
+        // setContext/getContext and setPageContext/getPageContext operate on
+        // this request's own runtime table.
+        let rt = self.request_runtime.clone();
+        let set_context = self.lua.create_function(move |lua, (key, value): (String, Value)| {
+            let Some(stack) = rt.as_ref().and_then(|r| r.get::<Table>("context_stack").ok()) else {
+                return Ok(());
+            };
+            let len = stack.len().unwrap_or(0);
+            let scope = if len == 0 {
+                let new_scope = lua.create_table()?;
+                stack.push(new_scope.clone())?;
+                new_scope
+            } else {
+                stack.get::<Table>(len)?
+            };
+            scope.set(key, value)
         })?;
 
-        let get_context = self.lua.create_function(|lua, key: String| {
-            // Get the shared request runtime from registry
-            if let Ok(runtime) = lua.named_registry_value::<Table>("__luat_request_runtime") {
-                if let Ok(stack) = runtime.get::<Table>("context_stack") {
-                    let len = stack.len().unwrap_or(0);
-                    // Search from top to bottom
-                    for i in (1..=len).rev() {
-                        if let Ok(scope) = stack.get::<Table>(i) {
-                            let val: Value = scope.get(key.clone())?;
-                            if !val.is_nil() {
-                                return Ok(val);
-                            }
-                        }
+        let rt = self.request_runtime.clone();
+        let get_context = self.lua.create_function(move |_, key: String| {
+            let Some(stack) = rt.as_ref().and_then(|r| r.get::<Table>("context_stack").ok()) else {
+                return Ok(Value::Nil);
+            };
+            for i in (1..=stack.len().unwrap_or(0)).rev() {
+                if let Ok(scope) = stack.get::<Table>(i) {
+                    let val: Value = scope.get(key.as_str())?;
+                    if !val.is_nil() {
+                        return Ok(val);
                     }
                 }
             }
@@ -317,25 +318,20 @@ impl<'lua> Runtime<'lua> {
         ctx.set("setContext", set_context)?;
         ctx.set("getContext", get_context)?;
 
-        // Add setPageContext/getPageContext for non-scoped page metadata (view_title, etc.)
-        // These persist for the entire request, not scoped to individual templates
-        let set_page_context = self.lua.create_function(|lua, (key, value): (String, Value)| {
-            if let Ok(runtime) = lua.named_registry_value::<Table>("__luat_request_runtime") {
-                if let Ok(page_ctx) = runtime.get::<Table>("page_context") {
-                    page_ctx.set(key, value)?;
-                }
+        let rt = self.request_runtime.clone();
+        let set_page_context = self.lua.create_function(move |_, (key, value): (String, Value)| {
+            match rt.as_ref().and_then(|r| r.get::<Table>("page_context").ok()) {
+                Some(page_ctx) => page_ctx.set(key, value),
+                None => Ok(()),
             }
-            Ok(())
         })?;
 
-        let get_page_context = self.lua.create_function(|lua, key: String| {
-            if let Ok(runtime) = lua.named_registry_value::<Table>("__luat_request_runtime") {
-                if let Ok(page_ctx) = runtime.get::<Table>("page_context") {
-                    let val: Value = page_ctx.get(key)?;
-                    return Ok(val);
-                }
+        let rt = self.request_runtime.clone();
+        let get_page_context = self.lua.create_function(move |_, key: String| {
+            match rt.as_ref().and_then(|r| r.get::<Table>("page_context").ok()) {
+                Some(page_ctx) => page_ctx.get::<Value>(key),
+                None => Ok(Value::Nil),
             }
-            Ok(Value::Nil)
         })?;
 
         ctx.set("setPageContext", set_page_context)?;

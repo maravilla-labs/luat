@@ -86,17 +86,9 @@ impl<'lua> ActionExecutor<'lua> {
     /// Loads the server file into a fresh environment (inheriting globals) and
     /// resolves the handler for this request.
     fn prepare(&self, source: &str, path: &str, ctx: &ActionContext) -> LuaResult<Function> {
-        // Set current module path so require() can resolve relative paths
-        self.lua.set_named_registry_value("__luat_current_module", path)?;
-        let globals = self.lua.globals();
-        let _ = globals.set("__luat_current_module", path);
-
         self.register_fail_helper()?;
 
-        let env = self.lua.create_table()?;
-        let mt = self.lua.create_table()?;
-        mt.set("__index", globals)?;
-        env.set_metatable(Some(mt));
+        let env = crate::scoped_require::handler_env(self.lua, path)?;
 
         self.lua
             .load(source)

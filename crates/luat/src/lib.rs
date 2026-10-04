@@ -82,6 +82,8 @@ pub mod router;
 /// Runtime execution for server-side Lua code.
 pub mod runtime;
 
+mod scoped_require;
+
 /// WASM bindings for browser usage.
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;

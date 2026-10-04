@@ -31,6 +31,13 @@ fn engine_with_async_host(files: &[(&str, &str)]) -> (Engine<MemoryResourceResol
         })
         .unwrap();
     host.set("lookup", lookup).unwrap();
+    let sleep = lua
+        .create_async_function(|_, ms: u64| async move {
+            tokio::time::sleep(Duration::from_millis(ms)).await;
+            Ok(())
+        })
+        .unwrap();
+    host.set("sleep", sleep).unwrap();
     lua.globals().set("host", host).unwrap();
 
     let router = Router::from_paths(files.iter().map(|(p, _)| *p));
@@ -144,4 +151,77 @@ async fn handlers_do_not_leak_between_routes() {
     let response = respond(&engine, &router, LuatRequest::new("/b", "POST")).await;
     // Route b defines no actions; it must not pick up route a's table.
     assert_eq!(response.status(), 500, "got {response:?}");
+}
+
+/// Two requests interleaving on one engine must not see each other's
+/// per-request state (setContext / setPageContext / view_title).
+#[tokio::test]
+async fn interleaved_requests_keep_their_own_page_context() {
+    let (engine, router) = engine_with_async_host(&[
+        ("a/+page.luat", "<p>a</p>"),
+        (
+            "a/+page.server.lua",
+            "function load(ctx) host.sleep(20); ctx.setPageContext('view_title', 'from-a'); return {} end",
+        ),
+        ("b/+page.luat", "<p>b</p>"),
+        (
+            "b/+page.server.lua",
+            "function load(ctx) host.sleep(60); return {} end",
+        ),
+    ]);
+
+    let route_a = router.match_url("/a").unwrap();
+    let route_b = router.match_url("/b").unwrap();
+    let req_a = LuatRequest::new("/a", "GET");
+    let req_b = LuatRequest::new("/b", "GET");
+
+    let (a, b) = tokio::join!(engine.respond_async(&route_a, &req_a), async {
+        // Start b while a is suspended in its first sleep.
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        engine.respond_async(&route_b, &req_b).await
+    });
+
+    let title = |r: LuatResponse| match r {
+        LuatResponse::Html { headers, .. } => headers.get("x-luat-title").cloned(),
+        other => panic!("expected html, got {other:?}"),
+    };
+    assert_eq!(title(a.unwrap()).as_deref(), Some("from-a"));
+    assert_eq!(title(b.unwrap()), None, "request b picked up request a's state");
+}
+
+/// A relative `require` that runs after an await must resolve against the
+/// file that contains it, not whichever request touched the loader last.
+#[tokio::test]
+async fn relative_require_after_await_uses_own_directory() {
+    let (engine, router) = engine_with_async_host(&[
+        ("a/+page.luat", "<p>{props.who}</p>"),
+        ("a/helper.lua", "return { who = 'helper-a' }"),
+        (
+            "a/+page.server.lua",
+            "function load(ctx) host.sleep(20); return { who = require('./helper.lua').who } end",
+        ),
+        ("b/+page.luat", "<p>{props.who}</p>"),
+        ("b/helper.lua", "return { who = 'helper-b' }"),
+        (
+            "b/+page.server.lua",
+            "function load(ctx) host.sleep(40); return { who = require('./helper.lua').who } end",
+        ),
+    ]);
+
+    let route_a = router.match_url("/a").unwrap();
+    let route_b = router.match_url("/b").unwrap();
+    let req_a = LuatRequest::new("/a", "GET");
+    let req_b = LuatRequest::new("/b", "GET");
+
+    let (a, b) = tokio::join!(engine.respond_async(&route_a, &req_a), async {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        engine.respond_async(&route_b, &req_b).await
+    });
+
+    let body = |r: LuatResponse| match r {
+        LuatResponse::Html { body, .. } => body,
+        other => panic!("expected html, got {other:?}"),
+    };
+    assert_eq!(body(a.unwrap()), "<p>helper-a</p>");
+    assert_eq!(body(b.unwrap()), "<p>helper-b</p>");
 }

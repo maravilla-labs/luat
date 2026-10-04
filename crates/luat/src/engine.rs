@@ -350,6 +350,10 @@ impl<R: ResourceResolver> Engine<R> {
 
         // Setup the custom module searcher to resolve Lua modules through our resolver
         engine.setup_custom_searcher()?;
+        // Lets per-module require cache by canonical path (see scoped_require).
+        engine
+            .lua
+            .set_app_data(crate::scoped_require::ModuleKeys(engine.resolver.clone_box()));
         // Register the json module using the shared implementation
         crate::extensions::json::register_json_module(&engine.lua)?;
 
@@ -412,7 +416,8 @@ impl<R: ResourceResolver> Engine<R> {
             if let Ok(Some(module)) = cache.get(&cache_key) {
                 //println!("DEBUG: Found module in cache with exact key: {}", cache_key);
                 // Found in cache, create loader function
-                match lua.load(&module.lua_code).into_function() {
+                let env = crate::scoped_require::module_env(lua, &module_path)?;
+                match lua.load(&module.lua_code).set_environment(env).into_function() {
                     Ok(loader) => {
                         // Return the loader function and the module path
                         return Ok((Some(loader), Some(format!("cache:{}", module_path))));
@@ -560,7 +565,8 @@ impl<R: ResourceResolver> Engine<R> {
                     // The @ prefix tells Lua this is a file path
                     let display_path = to_relative_path(&resolved.path, &root_path_for_searcher);
                     let chunk_name = format!("@{}", display_path);
-                    match lua.load(&content).set_name(&chunk_name).into_function() {
+                    let env = crate::scoped_require::module_env(lua, &resolved.path)?;
+                    match lua.load(&content).set_name(&chunk_name).set_environment(env).into_function() {
                         Ok(loader) => {
                             // Return the loader function and the module path with source info
                             // Use the original module name from require() as the identifier
@@ -603,7 +609,13 @@ impl<R: ResourceResolver> Engine<R> {
                                 // Set chunk name to relative path for readable error messages
                                 let display_path = to_relative_path(&resolved.path, &root_path_for_searcher);
                                 let chunk_name = format!("@{}", display_path);
-                                match lua.load(&resolved.source).set_name(&chunk_name).into_function() {
+                                let env = crate::scoped_require::module_env(lua, &resolved.path)?;
+                                match lua
+                                    .load(&resolved.source)
+                                    .set_name(&chunk_name)
+                                    .set_environment(env)
+                                    .into_function()
+                                {
                                     Ok(loader) => {
                                         Ok((
                                             Some(loader),
@@ -841,7 +853,7 @@ impl<R: ResourceResolver> Engine<R> {
     /// assert!(html.contains("Hello, World"));
     /// ```
     pub fn render(&self, module: &Module, context: &Value) -> Result<String> {
-        let (render_func, runtime) = self.prepare_render(module)?;
+        let (render_func, runtime) = self.prepare_render(module, None)?;
         let result = render_func.call::<String>((self.lua.to_value(context)?, &runtime));
         result.map_err(|e| Self::translate_render_error(module, e))
     }
@@ -852,10 +864,30 @@ impl<R: ResourceResolver> Engine<R> {
     /// functions.
     #[cfg(feature = "async-lua")]
     pub async fn render_async(&self, module: &Module, context: &Value) -> Result<String> {
-        let (render_func, runtime) = self.prepare_render(module)?;
+        self.render_async_in(module, context, None).await
+    }
+
+    /// Renders `module` asynchronously within a request, sharing that
+    /// request's runtime (context stack and page context) with its templates.
+    #[cfg(feature = "async-lua")]
+    async fn render_async_in(
+        &self,
+        module: &Module,
+        context: &Value,
+        request_runtime: Option<&Table>,
+    ) -> Result<String> {
+        let (render_func, runtime) = self.prepare_render(module, request_runtime)?;
         let result = render_func
             .call_async::<String>((self.lua.to_value(context)?, &runtime))
             .await;
+        result.map_err(|e| Self::translate_render_error(module, e))
+    }
+
+    /// Renders `module` within a request, sharing that request's runtime with
+    /// its templates.
+    fn render_in(&self, module: &Module, context: &Value, request_runtime: &Table) -> Result<String> {
+        let (render_func, runtime) = self.prepare_render(module, Some(request_runtime))?;
+        let result = render_func.call::<String>((self.lua.to_value(context)?, &runtime));
         result.map_err(|e| Self::translate_render_error(module, e))
     }
 
@@ -879,7 +911,11 @@ impl<R: ResourceResolver> Engine<R> {
 
     /// Loads a module's dependencies and the module itself, returning its
     /// `render` function and the request runtime table to call it with.
-    fn prepare_render(&self, module: &Module) -> Result<(mlua::Function, Table)> {
+    fn prepare_render(
+        &self,
+        module: &Module,
+        request_runtime: Option<&Table>,
+    ) -> Result<(mlua::Function, Table)> {
         // First, ensure all dependencies are loaded recursively
         //println!("DEBUG: Loading dependencies for module: {}", module.name);
         if !module.dependencies.is_empty() {
@@ -917,9 +953,15 @@ impl<R: ResourceResolver> Engine<R> {
 
                             // Load the module into the Lua state
                             // Store the path in registry for nested requires, then set chunk name
-                            self.lua.set_named_registry_value("__luat_current_module", resolved.path.clone())?;
                             let chunk_name = format!("@{}", self.make_relative_path(&resolved.path));
-                            let lua_module = match self.lua.load(&compiled).set_name(&chunk_name).eval::<Table>() {
+                            let env = crate::scoped_require::module_env(&self.lua, &resolved.path)?;
+                            let lua_module = match self
+                                .lua
+                                .load(&compiled)
+                                .set_name(&chunk_name)
+                                .set_environment(env)
+                                .eval::<Table>()
+                            {
                                 Ok(m) => m,
                                 Err(e) => {
                                     //println!("DEBUG: Error loading dependency {}: {:?}", dep, e);
@@ -952,13 +994,15 @@ impl<R: ResourceResolver> Engine<R> {
         //    println!("DEBUG: No dependencies declared for this module");
         //}
 
-        // Load the Lua module
-        // Store the current module path in registry so nested require() calls can find it
+        // Load the Lua module with a require bound to its own path, so
+        // relative imports resolve correctly even after an await.
         let module_path = module.path.clone().unwrap_or_else(|| module.name.clone());
-        self.lua.set_named_registry_value("__luat_current_module", module_path.clone())?;
-
-        let chunk = self.lua.load(&module.lua_code);
-        let chunk = chunk.set_name(format!("@{}", self.make_relative_path(&module_path)));
+        let env = crate::scoped_require::module_env(&self.lua, &module_path)?;
+        let chunk = self
+            .lua
+            .load(&module.lua_code)
+            .set_name(format!("@{}", self.make_relative_path(&module_path)))
+            .set_environment(env);
         let lua_func = chunk
             .eval::<Table>()
             .map_err(|e| Self::translate_render_error(module, e))?;
@@ -973,17 +1017,9 @@ impl<R: ResourceResolver> Engine<R> {
 
         let render_func = lua_func.get::<mlua::Function>("render")?;
 
-        // Get the shared runtime from registry (initialized by handle_page_route)
-        // This preserves the context_stack across all renders in a request
-        let runtime: Table = match self.lua.named_registry_value::<Table>("__luat_request_runtime") {
-            Ok(existing) => existing,
-            Err(_) => {
-                // Fallback: create a temporary runtime for standalone renders
-                let runtime = self.lua.create_table()?;
-                let stack: Table = self.lua.create_sequence_from::<Table>(vec![])?;
-                runtime.set("context_stack", stack)?;
-                runtime
-            }
+        let runtime = match request_runtime {
+            Some(existing) => existing.clone(),
+            None => self.new_request_runtime()?,
         };
 
         Ok((render_func, runtime))
@@ -1142,6 +1178,16 @@ impl<R: ResourceResolver> Engine<R> {
     /// Only available when the `async-lua` feature is enabled.
     #[cfg(feature = "async-lua")]
     pub async fn render_from_bundle(&self, module_name: &str, context: &Value) -> Result<String> {
+        self.render_from_bundle_in(module_name, context, None).await
+    }
+
+    #[cfg(feature = "async-lua")]
+    async fn render_from_bundle_in(
+        &self,
+        module_name: &str,
+        context: &Value,
+        request_runtime: Option<&Table>,
+    ) -> Result<String> {
         // println!("DEBUG: Rendering from bundle module: {}", module_name);
         let require: mlua::Function = self.lua.globals().get("require")?;
         // println!("DEBUG: Calling require for module: {}", module_name);
@@ -1156,17 +1202,9 @@ impl<R: ResourceResolver> Engine<R> {
 
         let render_func: mlua::Function = module.get("render")?;
 
-        // Get the shared runtime from registry (initialized by handle_page_route)
-        // This preserves the context_stack across all renders in a request
-        let runtime: Table = match self.lua.named_registry_value::<Table>("__luat_request_runtime") {
-            Ok(existing) => existing,
-            Err(_) => {
-                // Fallback: create a temporary runtime for standalone renders
-                let runtime = self.lua.create_table()?;
-                let stack: Table = self.lua.create_sequence_from::<Table>(vec![])?;
-                runtime.set("context_stack", stack)?;
-                runtime
-            }
+        let runtime = match request_runtime {
+            Some(existing) => existing.clone(),
+            None => self.new_request_runtime()?,
         };
 
         let result: String = render_func.call_async((context, &runtime)).await?;
@@ -1688,6 +1726,8 @@ _G.__bundle_debug = {
             end
         "#;
         self.lua.load(lua_code).exec()?;
+        self.lua
+            .set_named_registry_value(crate::scoped_require::NO_MODULE_CACHE_KEY, true)?;
         Ok(())
     }
 
@@ -1718,6 +1758,7 @@ _G.__bundle_debug = {
             loaded.set(key, mlua::Value::Nil)?;
         }
 
+        crate::scoped_require::clear_module_cache(&self.lua)?;
         Ok(())
     }
 
@@ -1906,12 +1947,19 @@ _G.__bundle_debug = {
     }
 
     #[cfg(feature = "async-lua")]
-    async fn render_template_async(&self, module_path: &str, context: &Value) -> Result<String> {
+    async fn render_template_async(
+        &self,
+        module_path: &str,
+        context: &Value,
+        request_runtime: Option<&Table>,
+    ) -> Result<String> {
         match self.compile_entry(module_path) {
-            Ok(module) => self.render_async(&module, context).await,
+            Ok(module) => self.render_async_in(&module, context, request_runtime).await,
             Err(err) => {
                 if self.is_not_found_error(&err) {
-                    return self.render_from_bundle(module_path, context).await;
+                    return self
+                        .render_from_bundle_in(module_path, context, request_runtime)
+                        .await;
                 }
                 Err(err)
             }
@@ -1931,7 +1979,7 @@ _G.__bundle_debug = {
                 // Template found - load and render it
                 // Use render_template_async which has fallback to bundle rendering
                 let context = self.to_value(&response.data)?;
-                let html = self.render_template_async(&template_path, &context).await?;
+                let html = self.render_template_async(&template_path, &context, None).await?;
                 return Ok(Some(html));
             }
         }
@@ -1998,7 +2046,7 @@ _G.__bundle_debug = {
         }
 
         // For page routes, run load functions and render
-        self.handle_page_route(&runtime, route, request)
+        self.handle_page_route(route, request)
     }
 
     /// Async request handler that can fall back to bundle rendering.
@@ -2020,7 +2068,7 @@ _G.__bundle_debug = {
             return self.handle_action_request_async(route, request).await;
         }
 
-        self.handle_page_route_async(&runtime, route, request).await
+        self.handle_page_route_async(route, request).await
     }
 
     fn handle_action_request_sync(
@@ -2174,106 +2222,89 @@ _G.__bundle_debug = {
         LuatResponse::json_with_headers(api_result.status, api_result.body, api_result.headers)
     }
 
+    /// Creates the per-request runtime table shared by a request's load
+    /// functions and templates (`context_stack`, `page_context`).
+    fn new_request_runtime(&self) -> Result<Table> {
+        let request_runtime = self.lua.create_table()?;
+        let context_stack: Table = self.lua.create_sequence_from::<Table>(vec![])?;
+        request_runtime.set("context_stack", context_stack)?;
+        // Non-scoped page context for view_title etc.
+        request_runtime.set("page_context", self.lua.create_table()?)?;
+        Ok(request_runtime)
+    }
+
+    /// Applies a load result to the merged props, or returns the redirect
+    /// response the load function asked for.
+    fn merge_load_result(
+        merged_props: &mut serde_json::Map<String, serde_json::Value>,
+        load_result: crate::runtime::LoadResult,
+    ) -> Option<crate::response::LuatResponse> {
+        if let Some(redirect) = load_result.redirect {
+            let status = load_result.status.unwrap_or(302);
+            return Some(crate::response::LuatResponse::redirect_with_status(status, redirect));
+        }
+        if let serde_json::Value::Object(props) = load_result.props {
+            merged_props.extend(props);
+        }
+        None
+    }
+
+    fn page_path(route: &crate::router::Route) -> Result<&str> {
+        route.page.as_deref().ok_or_else(|| {
+            LuatError::InvalidTemplate("Page route has no +page.luat".to_string())
+        })
+    }
+
+    /// Builds the HTML response, adding `x-luat-title` when a template or
+    /// load function set `view_title`.
+    fn page_response(&self, body: String, request_runtime: &Table) -> Result<crate::response::LuatResponse> {
+        let mut headers = std::collections::HashMap::new();
+        if let Some(title) = self.extract_view_title_from_context(request_runtime)? {
+            headers.insert("x-luat-title".to_string(), title);
+        }
+        Ok(crate::response::LuatResponse::Html {
+            status: 200,
+            headers,
+            body,
+        })
+    }
+
     /// Handles a page route (+page.luat with optional load functions).
+    ///
+    /// Runs layout and page load functions (root to leaf), renders the page,
+    /// then wraps it in its layouts from innermost to outermost.
     fn handle_page_route(
         &self,
-        runtime: &crate::runtime::Runtime,
         route: &crate::router::Route,
         request: &crate::request::LuatRequest,
     ) -> Result<crate::response::LuatResponse> {
-        use crate::response::LuatResponse;
         use serde_json::Value as JsonValue;
 
-        // Initialize shared runtime for this request (enables setContext/getContext in templates)
-        let request_runtime: Table = self.lua.create_table()?;
-        let context_stack: Table = self.lua.create_sequence_from::<Table>(vec![])?;
-        let page_context: Table = self.lua.create_table()?;  // Non-scoped page context for view_title etc.
-        request_runtime.set("context_stack", context_stack)?;
-        request_runtime.set("page_context", page_context)?;
-        self.lua.set_named_registry_value("__luat_request_runtime", request_runtime.clone())?;
-
+        let request_runtime = self.new_request_runtime()?;
+        let runtime = crate::runtime::Runtime::with_request_runtime(&self.lua, request_runtime.clone());
         let mut merged_props = serde_json::Map::new();
 
-        // 1. Run layout server load functions (from root to current)
-        for layout_server_path in &route.layout_servers {
-            let load_result = self.run_load_file(runtime, layout_server_path, request, &route.params)?;
-
-            // Check for redirect
-            if let Some(redirect) = load_result.redirect {
-                let status = load_result.status.unwrap_or(302);
-                return Ok(LuatResponse::redirect_with_status(status, redirect));
-            }
-
-            // Merge props
-            if let JsonValue::Object(props) = load_result.props {
-                for (k, v) in props {
-                    merged_props.insert(k, v);
-                }
+        let load_files = route.layout_servers.iter().chain(route.page_server.iter());
+        for server_path in load_files {
+            let load_result = self.run_load_file(&runtime, server_path, request, &route.params)?;
+            if let Some(redirect) = Self::merge_load_result(&mut merged_props, load_result) {
+                return Ok(redirect);
             }
         }
 
-        // 2. Run page server load function if present
-        if let Some(ref page_server_path) = route.page_server {
-            let load_result = self.run_load_file(runtime, page_server_path, request, &route.params)?;
-
-            // Check for redirect
-            if let Some(redirect) = load_result.redirect {
-                let status = load_result.status.unwrap_or(302);
-                return Ok(LuatResponse::redirect_with_status(status, redirect));
-            }
-
-            // Merge props
-            if let JsonValue::Object(props) = load_result.props {
-                for (k, v) in props {
-                    merged_props.insert(k, v);
-                }
-            }
-        }
-
-        // 3. Render the page template
-        let page_path = route.page.as_ref().ok_or_else(|| {
-            LuatError::InvalidTemplate("Page route has no +page.luat".to_string())
-        })?;
-
-        // Compile the page template
-        let module = self.compile_entry(page_path)?;
-
-        // Convert merged props to Lua value
+        let module = self.compile_entry(Self::page_path(route)?)?;
         let context = self.to_value(JsonValue::Object(merged_props.clone()))?;
+        let mut body_html = self.render_in(&module, &context, &request_runtime)?;
 
-        // Render the page
-        let mut body_html = self.render(&module, &context)?;
-
-        // 4. Wrap in layouts (from innermost to outermost)
         for layout_path in route.layouts.iter().rev() {
-            // Create layout props with children
             let mut layout_props = merged_props.clone();
-            layout_props.insert("children".to_string(), JsonValue::String(body_html.clone()));
-
+            layout_props.insert("children".to_string(), JsonValue::String(body_html));
             let layout_context = self.to_value(JsonValue::Object(layout_props))?;
-
-            // Compile and render the layout
             let layout_module = self.compile_entry(layout_path)?;
-            body_html = self.render(&layout_module, &layout_context)?;
+            body_html = self.render_in(&layout_module, &layout_context, &request_runtime)?;
         }
 
-        // Extract view_title from context_stack if set by any template
-        let view_title = self.extract_view_title_from_context(&request_runtime)?;
-
-        // Clean up request runtime from registry
-        let _ = self.lua.unset_named_registry_value("__luat_request_runtime");
-
-        // Build response with optional view_title header
-        let mut headers = std::collections::HashMap::new();
-        if let Some(title) = view_title {
-            headers.insert("x-luat-title".to_string(), title);
-        }
-
-        Ok(LuatResponse::Html {
-            status: 200,
-            headers,
-            body: body_html,
-        })
+        self.page_response(body_html, &request_runtime)
     }
 
     /// Extracts view_title from page_context (preferred) or context_stack (fallback).
@@ -2307,89 +2338,46 @@ _G.__bundle_debug = {
         Ok(None)
     }
 
-    /// Handles a page route with async rendering (bundle-aware).
+    /// Async variant of [`handle_page_route`](Self::handle_page_route), with
+    /// fallback to bundle rendering.
     #[cfg(feature = "async-lua")]
     async fn handle_page_route_async(
         &self,
-        runtime: &crate::runtime::Runtime<'_>,
         route: &crate::router::Route,
         request: &crate::request::LuatRequest,
     ) -> Result<crate::response::LuatResponse> {
-        use crate::response::LuatResponse;
         use serde_json::Value as JsonValue;
 
-        // Initialize shared runtime for this request (enables setContext/getContext in templates)
-        let request_runtime: Table = self.lua.create_table()?;
-        let context_stack: Table = self.lua.create_sequence_from::<Table>(vec![])?;
-        let page_context: Table = self.lua.create_table()?;  // Non-scoped page context for view_title etc.
-        request_runtime.set("context_stack", context_stack)?;
-        request_runtime.set("page_context", page_context)?;
-        self.lua.set_named_registry_value("__luat_request_runtime", request_runtime.clone())?;
-
+        let request_runtime = self.new_request_runtime()?;
+        let runtime = crate::runtime::Runtime::with_request_runtime(&self.lua, request_runtime.clone());
         let mut merged_props = serde_json::Map::new();
 
-        for layout_server_path in &route.layout_servers {
-            let load_result = self.run_load_file_async(runtime, layout_server_path, request, &route.params).await?;
-
-            if let Some(redirect) = load_result.redirect {
-                let status = load_result.status.unwrap_or(302);
-                return Ok(LuatResponse::redirect_with_status(status, redirect));
-            }
-
-            if let JsonValue::Object(props) = load_result.props {
-                for (k, v) in props {
-                    merged_props.insert(k, v);
-                }
+        let load_files = route.layout_servers.iter().chain(route.page_server.iter());
+        for server_path in load_files {
+            let load_result = self
+                .run_load_file_async(&runtime, server_path, request, &route.params)
+                .await?;
+            if let Some(redirect) = Self::merge_load_result(&mut merged_props, load_result) {
+                return Ok(redirect);
             }
         }
 
-        if let Some(ref page_server_path) = route.page_server {
-            let load_result = self.run_load_file_async(runtime, page_server_path, request, &route.params).await?;
-
-            if let Some(redirect) = load_result.redirect {
-                let status = load_result.status.unwrap_or(302);
-                return Ok(LuatResponse::redirect_with_status(status, redirect));
-            }
-
-            if let JsonValue::Object(props) = load_result.props {
-                for (k, v) in props {
-                    merged_props.insert(k, v);
-                }
-            }
-        }
-
-        let page_path = route.page.as_ref().ok_or_else(|| {
-            LuatError::InvalidTemplate("Page route has no +page.luat".to_string())
-        })?;
-
+        let page_path = Self::page_path(route)?;
         let context = self.to_value(JsonValue::Object(merged_props.clone()))?;
-        let mut body_html = self.render_template_async(page_path, &context).await?;
+        let mut body_html = self
+            .render_template_async(page_path, &context, Some(&request_runtime))
+            .await?;
 
         for layout_path in route.layouts.iter().rev() {
             let mut layout_props = merged_props.clone();
-            layout_props.insert("children".to_string(), JsonValue::String(body_html.clone()));
-
+            layout_props.insert("children".to_string(), JsonValue::String(body_html));
             let layout_context = self.to_value(JsonValue::Object(layout_props))?;
-            body_html = self.render_template_async(layout_path, &layout_context).await?;
+            body_html = self
+                .render_template_async(layout_path, &layout_context, Some(&request_runtime))
+                .await?;
         }
 
-        // Extract view_title from context_stack if set by any template
-        let view_title = self.extract_view_title_from_context(&request_runtime)?;
-
-        // Clean up request runtime from registry
-        let _ = self.lua.unset_named_registry_value("__luat_request_runtime");
-
-        // Build response with optional view_title header
-        let mut headers = std::collections::HashMap::new();
-        if let Some(title) = view_title {
-            headers.insert("x-luat-title".to_string(), title);
-        }
-
-        Ok(LuatResponse::Html {
-            status: 200,
-            headers,
-            body: body_html,
-        })
+        self.page_response(body_html, &request_runtime)
     }
 
     /// Async variant of [`run_load_file`](Self::run_load_file).

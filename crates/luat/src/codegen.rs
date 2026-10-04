@@ -1022,6 +1022,14 @@ where
     bundle.push_str("  return nil\n");
     bundle.push_str("end\n\n");
 
+    // Each loaded module gets a require bound to its own path, so relative
+    // imports resolve correctly even when they run after an await.
+    bundle.push_str("local __require_from\n");
+    bundle.push_str("local function __module_env(key)\n");
+    bundle.push_str("  local env = { require = function(name) return __require_from(name, key) end }\n");
+    bundle.push_str("  return setmetatable(env, { __index = _G, __newindex = _G })\n");
+    bundle.push_str("end\n\n");
+
     bundle.push_str("local function __load_server_module(key)\n");
     bundle.push_str("  if package.loaded[key] ~= nil then return package.loaded[key] end\n");
     bundle.push_str("  if not __server_sources then return nil end\n");
@@ -1029,7 +1037,7 @@ where
     bundle.push_str("  if not source then return nil end\n");
     bundle.push_str("  local prev = _G.__luat_current_module\n");
     bundle.push_str("  _G.__luat_current_module = key\n");
-    bundle.push_str("  local fn = __load(source, \"@\" .. key)\n");
+    bundle.push_str("  local fn = __load(source, \"@\" .. key, \"t\", __module_env(key))\n");
     bundle.push_str("  local ok, result = pcall(fn)\n");
     bundle.push_str("  _G.__luat_current_module = prev\n");
     bundle.push_str("  if not ok then error(result, 2) end\n");
@@ -1038,22 +1046,32 @@ where
     bundle.push_str("  return result\n");
     bundle.push_str("end\n\n");
 
+    bundle.push_str("__require_from = function(name, importer)\n");
+    bundle.push_str("  local prev = _G.__luat_current_module\n");
+    bundle.push_str("  _G.__luat_current_module = importer\n");
+    bundle.push_str("  local ok, result = pcall(function()\n");
+    bundle.push_str("    local kind, key = __resolve_module(name, importer)\n");
+    bundle.push_str("    if kind == \"module\" then return __modules[key] end\n");
+    bundle.push_str("    if kind == \"loader\" then\n");
+    bundle.push_str("      local result = __module_loaders[key]()\n");
+    bundle.push_str("      if result == nil then result = true end\n");
+    bundle.push_str("      __modules[key] = result\n");
+    bundle.push_str("      package.loaded[key] = result\n");
+    bundle.push_str("      return result\n");
+    bundle.push_str("    end\n");
+    bundle.push_str("    if kind == \"server\" then\n");
+    bundle.push_str("      local result = __load_server_module(key)\n");
+    bundle.push_str("      if result ~= nil then return result end\n");
+    bundle.push_str("    end\n");
+    bundle.push_str("    return __original_require(name)\n");
+    bundle.push_str("  end)\n");
+    bundle.push_str("  _G.__luat_current_module = prev\n");
+    bundle.push_str("  if not ok then error(result, 2) end\n");
+    bundle.push_str("  return result\n");
+    bundle.push_str("end\n\n");
+
     bundle.push_str("local function __require(name)\n");
-    bundle.push_str("  local importer = _G.__luat_current_module or \"\"\n");
-    bundle.push_str("  local kind, key = __resolve_module(name, importer)\n");
-    bundle.push_str("  if kind == \"module\" then return __modules[key] end\n");
-    bundle.push_str("  if kind == \"loader\" then\n");
-    bundle.push_str("    local result = __module_loaders[key]()\n");
-    bundle.push_str("    if result == nil then result = true end\n");
-    bundle.push_str("    __modules[key] = result\n");
-    bundle.push_str("    package.loaded[key] = result\n");
-    bundle.push_str("    return result\n");
-    bundle.push_str("  end\n");
-    bundle.push_str("  if kind == \"server\" then\n");
-    bundle.push_str("    local result = __load_server_module(key)\n");
-    bundle.push_str("    if result ~= nil then return result end\n");
-    bundle.push_str("  end\n");
-    bundle.push_str("  return __original_require(name)\n");
+    bundle.push_str("  return __require_from(name, _G.__luat_current_module or \"\")\n");
     bundle.push_str("end\n\n");
 
     bundle.push_str("_G.require = __require\n\n");
@@ -1078,15 +1096,20 @@ where
         progress(i, sources.len());
 
         // Calculate the line offset where this module's source starts
-        // (current bundle lines + 5 wrapper lines: comment, function, prev, current_module, pcall)
+        // (current bundle lines + 6 wrapper lines: comment, function, prev,
+        // current_module, local require, pcall)
         let bundle_lines_so_far = bundle.lines().count();
-        let module_source_start_line = bundle_lines_so_far + 6; // 5 wrapper lines + 1 for 1-indexing
+        let module_source_start_line = bundle_lines_so_far + 7; // 6 wrapper lines + 1 for 1-indexing
 
         let escaped_name = escape_lua_string(name);
         bundle.push_str(&format!("-- Module: {}\n", name));
         bundle.push_str(&format!("__module_loaders[\"{}\"] = function()\n", escaped_name));
         bundle.push_str("  local __prev = _G.__luat_current_module\n");
         bundle.push_str(&format!("  _G.__luat_current_module = \"{}\"\n", escaped_name));
+        bundle.push_str(&format!(
+            "  local require = function(name) return __require_from(name, \"{}\") end\n",
+            escaped_name
+        ));
         bundle.push_str("  local __ok, __result = pcall(function()\n");
 
         // Indent the source code
