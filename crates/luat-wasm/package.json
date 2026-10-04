@@ -1,6 +1,6 @@
 {
   "name": "@maravilla-labs/luat-wasm",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "WebAssembly build of the Luat templating engine",
   "type": "module",
   "main": "./luat.js",

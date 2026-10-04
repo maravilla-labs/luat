@@ -1,6 +1,6 @@
 {
   "name": "@maravilla-labs/luat",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Svelte-inspired server-side Lua templating CLI",
   "bin": {
     "luat": "run.js"
