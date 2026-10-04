@@ -15,8 +15,9 @@ use luat::LuatRequest;
 /// Largest request body the servers accept.
 const MAX_BODY_SIZE: usize = 1024 * 1024;
 
-/// Reads an axum request into a [`LuatRequest`]: URL-decoded query, header
-/// map, and the body for methods that carry one.
+/// Reads an axum request into a [`LuatRequest`]: URL-decoded query (and the
+/// raw query string, for `ctx.search`), header map, and the body for methods
+/// that carry one.
 pub async fn to_luat_request(request: Request<Body>) -> Result<LuatRequest, Response> {
     let (parts, body) = request.into_parts();
 
@@ -34,6 +35,7 @@ pub async fn to_luat_request(request: Request<Body>) -> Result<LuatRequest, Resp
 
     let mut luat_request = LuatRequest::new(parts.uri.path(), parts.method.as_str())
         .with_query(query)
+        .with_raw_query(parts.uri.query().unwrap_or(""))
         .with_headers(headers);
 
     if parts.method != Method::GET && parts.method != Method::HEAD {

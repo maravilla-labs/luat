@@ -225,6 +225,8 @@ impl<'lua> ActionExecutor<'lua> {
 
         // Add metadata
         table.set("url", ctx.url.as_str())?;
+        let (path, search) = ctx.path_and_search();
+        crate::ctx_helpers::install_url(&table, path, search)?;
         table.set("method", ctx.method.as_str())?;
 
         Ok(table)

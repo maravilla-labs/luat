@@ -125,6 +125,9 @@ fn build_action_context(
 }
 
 fn action_url(request: &LuatRequest) -> String {
+    if request.raw_query.is_some() {
+        return request.href();
+    }
     if request.query.is_empty() {
         return request.path.clone();
     }

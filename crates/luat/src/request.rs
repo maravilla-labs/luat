@@ -41,6 +41,11 @@ pub struct LuatRequest {
     /// Query parameters (parsed from URL)
     pub query: HashMap<String, String>,
 
+    /// The raw query string as the client sent it, without the leading
+    /// `?` (e.g. `"page=2&sort=new"`). When unset, [`search`](Self::search)
+    /// rebuilds one from [`query`](Self::query).
+    pub raw_query: Option<String>,
+
     /// Cookies
     pub cookies: HashMap<String, String>,
 }
@@ -54,6 +59,7 @@ impl LuatRequest {
             headers: HashMap::new(),
             body: None,
             query: HashMap::new(),
+            raw_query: None,
             cookies: HashMap::new(),
         }
     }
@@ -74,6 +80,44 @@ impl LuatRequest {
     pub fn with_query(mut self, query: HashMap<String, String>) -> Self {
         self.query = query;
         self
+    }
+
+    /// Sets the raw query string (without the leading `?`), exposed to
+    /// handlers as `ctx.search`. A leading `?` is stripped.
+    pub fn with_raw_query(mut self, raw_query: impl Into<String>) -> Self {
+        let raw: String = raw_query.into();
+        self.raw_query = Some(raw.strip_prefix('?').map(str::to_string).unwrap_or(raw));
+        self
+    }
+
+    /// The query string including its leading `?`, or `""` when there is
+    /// none (like `URL.search`). Uses [`raw_query`](Self::raw_query) when
+    /// set; otherwise it is rebuilt from [`query`](Self::query), sorted by
+    /// key.
+    pub fn search(&self) -> String {
+        let query = match &self.raw_query {
+            Some(raw) => raw.clone(),
+            None => {
+                let mut pairs: Vec<_> = self.query.iter().collect();
+                pairs.sort();
+                let mut serializer = form_urlencoded::Serializer::new(String::new());
+                for (key, value) in pairs {
+                    serializer.append_pair(key, value);
+                }
+                serializer.finish()
+            }
+        };
+        if query.is_empty() {
+            String::new()
+        } else {
+            format!("?{query}")
+        }
+    }
+
+    /// The path followed by the query string (`/search?q=lua`): the request
+    /// target, relative to the site's origin.
+    pub fn href(&self) -> String {
+        format!("{}{}", self.path, self.search())
     }
 
     /// Adds cookies to the request.
@@ -166,6 +210,23 @@ mod tests {
         let req = LuatRequest::new("/search", "GET")
             .with_query([("q".into(), "rust".into())].into());
         assert_eq!(req.query.get("q"), Some(&"rust".to_string()));
+    }
+
+    #[test]
+    fn search_and_href_use_the_raw_query() {
+        let req = LuatRequest::new("/search", "GET").with_raw_query("q=a%20b&q=c");
+        assert_eq!(req.search(), "?q=a%20b&q=c");
+        assert_eq!(req.href(), "/search?q=a%20b&q=c");
+        assert_eq!(LuatRequest::new("/", "GET").with_raw_query("?x=1").search(), "?x=1");
+        assert_eq!(LuatRequest::new("/", "GET").with_raw_query("").search(), "");
+    }
+
+    #[test]
+    fn search_is_rebuilt_from_the_query_map() {
+        let req = LuatRequest::new("/s", "GET")
+            .with_query([("b".into(), "x y".into()), ("a".into(), "1".into())].into());
+        assert_eq!(req.search(), "?a=1&b=x+y");
+        assert_eq!(LuatRequest::new("/s", "GET").search(), "");
     }
 
     #[test]

@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
-//! `ctx.setHeader`, `ctx.appendHeader` and `ctx.setStatus`, and the
-//! `partitioned` cookie option.
+//! `ctx.setHeader`, `ctx.appendHeader` and `ctx.setStatus`, the
+//! `partitioned` cookie option, and the request URL fields `ctx.path`,
+//! `ctx.search` and `ctx.href`.
 
 use luat::memory_resolver::MemoryResourceResolver;
 use luat::{Engine, LuatRequest, LuatResponse, Router};
@@ -246,4 +247,51 @@ fn partitioned_cookies() {
     );
     let response = get(&engine, &router, LuatRequest::new("/insecure", "GET"));
     assert_eq!(response.status(), 500);
+}
+
+#[test]
+fn request_url_fields() {
+    let (engine, router) = app(&[
+        ("page/+page.luat", "<p>{props.url}|{props.path}|{props.search}|{props.href}</p>"),
+        (
+            "page/+page.server.lua",
+            "function load(ctx) return { url = ctx.url, path = ctx.path, search = ctx.search, href = ctx.href } end",
+        ),
+        (
+            "api/+server.lua",
+            "function GET(ctx) return { body = { url = ctx.url, path = ctx.path, search = ctx.search, href = ctx.href } } end",
+        ),
+        ("form/+page.luat", "<form></form>"),
+        (
+            "form/+page.server.lua",
+            "actions = { save = function(ctx) return { path = ctx.path, search = ctx.search, href = ctx.href } end }",
+        ),
+    ]);
+    let request = LuatRequest::new("/page", "GET")
+        .with_query([("q".into(), "a b".into())].into())
+        .with_raw_query("q=a%20b&x");
+    let response = get(&engine, &router, request);
+    // ctx.url stays the path for compatibility.
+    assert_eq!(
+        html(&response),
+        "<p>/page|/page|?q=a%20b&amp;x|/page?q=a%20b&amp;x</p>"
+    );
+
+    let LuatResponse::Json { body, .. } = get(&engine, &router, LuatRequest::new("/api", "GET"))
+    else {
+        panic!("expected json");
+    };
+    assert_eq!(body["url"], "/api");
+    assert_eq!(body["search"], "");
+    assert_eq!(body["href"], "/api");
+
+    let request = LuatRequest::new("/form", "POST")
+        .with_query([("/save".into(), "".into())].into())
+        .with_raw_query("/save");
+    let LuatResponse::Json { body, .. } = get(&engine, &router, request) else {
+        panic!("expected json");
+    };
+    assert_eq!(body["path"], "/form");
+    assert_eq!(body["search"], "?/save");
+    assert_eq!(body["href"], "/form?/save");
 }

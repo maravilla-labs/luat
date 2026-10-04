@@ -186,6 +186,14 @@ pub(crate) fn install(lua: &Lua, ctx: &Table, jar: &CookieJar, kind: HandlerKind
     Ok(())
 }
 
+/// Sets `ctx.path` (the request path), `ctx.search` (the query string with
+/// its `?`, or `""`) and `ctx.href` (path followed by search).
+pub(crate) fn install_url(ctx: &Table, path: &str, search: &str) -> LuaResult<()> {
+    ctx.set("path", path)?;
+    ctx.set("search", search)?;
+    ctx.set("href", format!("{path}{search}"))
+}
+
 /// Headers handlers may not set with `ctx.setHeader`: cookies go through
 /// `ctx.setCookie`, redirects through `redirect`, and framing headers belong
 /// to the server.

@@ -113,6 +113,15 @@ impl ActionContext {
         self
     }
 
+    /// Splits [`url`](Self::url) into the path and the query string
+    /// (including its `?`, or `""` when there is none).
+    pub fn path_and_search(&self) -> (&str, &str) {
+        match self.url.find('?') {
+            Some(i) => (&self.url[..i], &self.url[i..]),
+            None => (self.url.as_str(), ""),
+        }
+    }
+
     /// Returns the effective action name for handler lookup.
     /// Returns "default" if no named action is specified.
     pub fn effective_action_name(&self) -> &str {
@@ -136,6 +145,12 @@ mod tests {
         assert_eq!(ctx.method, "POST");
         assert_eq!(ctx.url, "/blog/hello/edit");
         assert!(ctx.action_name.is_none());
+    }
+
+    #[test]
+    fn test_path_and_search() {
+        assert_eq!(ActionContext::new("POST", "/a?/save&x=1").path_and_search(), ("/a", "?/save&x=1"));
+        assert_eq!(ActionContext::new("POST", "/a").path_and_search(), ("/a", ""));
     }
 
     #[test]

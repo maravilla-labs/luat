@@ -253,8 +253,9 @@ impl<'lua> Runtime<'lua> {
         }
         ctx.set("params", params_table)?;
 
-        // Add URL and method
+        // URL (`ctx.url` is the path, kept for compatibility) and method
         ctx.set("url", request.path.as_str())?;
+        crate::ctx_helpers::install_url(&ctx, &request.path, &request.search())?;
         ctx.set("method", request.method.as_str())?;
 
         // Add query params
