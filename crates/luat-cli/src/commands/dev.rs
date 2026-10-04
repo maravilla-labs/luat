@@ -22,9 +22,16 @@ pub async fn run(host: &str, port: u16, verbose: bool, quiet: bool) -> anyhow::R
     let working_dir = std::env::current_dir()?;
     crate::commands::packages::ensure_installed(&working_dir).await?;
 
-    // Prepare frontend build tools if any are enabled
+    // Client entries: built with hashed names, rebuilt on every change.
+    let assets = if config.frontend.entries.is_empty() {
+        None
+    } else {
+        Some(DevAssetBuilder::start(&config, &working_dir, quiet).await?)
+    };
+
+    // Fixed-path frontend tools (projects without entries)
     let enabled_tools = config.frontend.get_enabled_tools();
-    if !enabled_tools.is_empty() {
+    if assets.is_none() && !enabled_tools.is_empty() {
         if !quiet {
             let tools_list: Vec<_> = enabled_tools.iter().map(|t| t.as_str()).collect();
             println!(
@@ -106,8 +113,14 @@ pub async fn run(host: &str, port: u16, verbose: bool, quiet: bool) -> anyhow::R
     let src_dir = "src".to_string();
     let tool_label = tool_label.to_string();
 
+    let watcher_assets = assets.clone();
     let mut watcher = FileWatcher::new(src_dir, working_dir.clone(), move |paths: Vec<PathBuf>| {
         let start = Instant::now();
+
+        // Templates feed Tailwind's class scan, so any change rebuilds.
+        if let Some(assets) = &watcher_assets {
+            assets.rebuild();
+        }
 
         // Send reload signal immediately
         let _ = watcher_tx.send(());
@@ -168,7 +181,7 @@ pub async fn run(host: &str, port: u16, verbose: bool, quiet: bool) -> anyhow::R
         println!();
     }
 
-    create_server(&addr, &config, reload_tx).await?;
+    create_server(&addr, &config, reload_tx, assets.map(|a| a.manifest)).await?;
 
     Ok(())
 }
@@ -201,4 +214,52 @@ fn watch_path_packages(
         watchers.push(watcher);
     }
     Ok(watchers)
+}
+
+/// Builds `[frontend] entries` for the dev server and keeps the result
+/// current.
+#[derive(Clone)]
+struct DevAssetBuilder {
+    options: luat::assets::AssetOptions,
+    manifest: crate::server::http::DevAssets,
+}
+
+impl DevAssetBuilder {
+    async fn start(config: &Config, working_dir: &std::path::Path, quiet: bool) -> anyhow::Result<Self> {
+        let (esbuild, tailwind) = crate::toolchain::asset_tools(&config.frontend, working_dir).await?;
+        let options = luat::assets::AssetOptions {
+            project_dir: working_dir.to_path_buf(),
+            entries: config.frontend.entries.clone(),
+            out_dir: crate::server::http::dev_assets_dir(working_dir),
+            esbuild,
+            tailwind,
+            production: false,
+        };
+        let start = Instant::now();
+        let manifest = luat::assets::build_assets(&options)?;
+        if !quiet {
+            println!(
+                "  {} {} {}",
+                style("✓").green(),
+                style(format!("Client assets ({} entries)", manifest.entries().len())).dim(),
+                style(format!("{}ms", start.elapsed().as_millis())).dim()
+            );
+        }
+        Ok(Self {
+            options,
+            manifest: Arc::new(std::sync::RwLock::new(manifest)),
+        })
+    }
+
+    /// Rebuilds; on failure the previous build stays in place.
+    fn rebuild(&self) {
+        match luat::assets::build_assets(&self.options) {
+            Ok(manifest) => {
+                if let Ok(mut current) = self.manifest.write() {
+                    *current = manifest;
+                }
+            }
+            Err(e) => eprintln!("  {} {}", style("✗").red(), style(format!("Client assets: {e}")).red()),
+        }
+    }
 }

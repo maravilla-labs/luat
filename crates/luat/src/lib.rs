@@ -57,6 +57,9 @@ pub mod resolver;
 pub mod error;
 /// Compiled module caching.
 pub mod cache;
+/// Client assets with content-hashed file names.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod assets;
 /// Lua runtime extensions.
 pub mod extensions;
 /// Script block processing.

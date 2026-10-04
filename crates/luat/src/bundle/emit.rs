@@ -72,6 +72,21 @@ pub(crate) fn app_html(html: Option<&str>) -> String {
     }
 }
 
+/// `__assets`, `__assets_head` and `asset()`: the client assets. Emitted
+/// for every bundle, so `asset()` fails with a clear message when there are
+/// none.
+pub(crate) fn assets(options: &super::build::BuildOptions) -> String {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        options.assets.clone().unwrap_or_default().to_lua()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = options;
+        String::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -18,6 +18,7 @@ use axum::{
 use console::style;
 use luat::{kv::register_kv_module, App, Bundle};
 use tower_http::services::ServeDir;
+use tower_http::set_header::SetResponseHeaderLayer;
 
 use crate::config::Config;
 use crate::kv::KVManager;
@@ -69,10 +70,15 @@ pub async fn run(host: &str, port: u16) -> anyhow::Result<()> {
         app.router.routes().len()
     );
 
+    let head = if app.head.is_empty() {
+        collect_production_head_assets(&config)
+    } else {
+        app.head.clone()
+    };
     let state = Arc::new(AppState {
         app,
         shell_options: luat::ShellOptions {
-            head: collect_production_head_assets(&config),
+            head,
             ..Default::default()
         },
     });
@@ -80,6 +86,7 @@ pub async fn run(host: &str, port: u16) -> anyhow::Result<()> {
     let router = Router::new()
         .nest_service("/public", ServeDir::new(dist_dir.join("public")))
         .nest_service("/static", ServeDir::new(dist_dir.join("static")))
+        .merge(immutable_assets(&dist_dir))
         .fallback(fallback_handler)
         .with_state(state);
 
@@ -124,6 +131,19 @@ async fn fallback_handler(State(state): State<Arc<AppState>>, request: Request<B
             response::error(500, "Internal Server Error")
         }
     }
+}
+
+/// Hashed client assets, cached for good: a changed file is a new URL.
+fn immutable_assets<S: Clone + Send + Sync + 'static>(dist_dir: &std::path::Path) -> Router<S> {
+    Router::new()
+        .nest_service(
+            &format!("/{}", luat::assets::IMMUTABLE_DIR),
+            ServeDir::new(dist_dir.join(luat::assets::IMMUTABLE_DIR)),
+        )
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("public, max-age=31536000, immutable"),
+        ))
 }
 
 fn collect_production_head_assets(config: &Config) -> String {

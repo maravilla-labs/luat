@@ -57,7 +57,7 @@ tokio = { version = "1", features = ["full"] }
 
 # Web server
 axum = { version = "0.7", features = ["ws"] }
-tower-http = { version = "0.5", features = ["fs", "cors"] }
+tower-http = { version = "0.5", features = ["fs", "cors", "set-header"] }
 
 # File watching
 notify = "8.0"

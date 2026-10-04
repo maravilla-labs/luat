@@ -57,6 +57,7 @@ fn project() -> (tempfile::TempDir, BuildOptions) {
         }],
         host_modules: vec!["myhost".to_string()],
         packages_dir: None,
+        assets: None,
     };
     (dir, options)
 }

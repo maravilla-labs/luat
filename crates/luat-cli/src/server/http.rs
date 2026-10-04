@@ -46,6 +46,16 @@ pub struct AppState {
     pub shell: luat::AppShell,
     /// KV store manager for server-side data persistence.
     pub kv_manager: Arc<KVManager>,
+    /// The latest build of `[frontend] entries`, when the project has them.
+    pub assets: Option<DevAssets>,
+}
+
+/// Client assets rebuilt by the dev server (see `commands/dev.rs`).
+pub type DevAssets = Arc<std::sync::RwLock<luat::assets::AssetManifest>>;
+
+/// Where the dev server writes built client assets.
+pub fn dev_assets_dir(working_dir: &std::path::Path) -> PathBuf {
+    working_dir.join(".luat").join("dev")
 }
 
 /// Creates and starts the development HTTP server.
@@ -53,6 +63,7 @@ pub async fn create_server(
     addr: &str,
     config: &Config,
     reload_tx: Arc<broadcast::Sender<()>>,
+    assets: Option<DevAssets>,
 ) -> anyhow::Result<()> {
     let working_dir = std::env::current_dir()?;
 
@@ -145,6 +156,7 @@ pub async fn create_server(
         routes_dir: templates_dir,
         shell: app_html_template.map(luat::AppShell::new).unwrap_or_default(),
         kv_manager,
+        assets,
     });
 
     // Build the app with appropriate routes
@@ -152,6 +164,10 @@ pub async fn create_server(
         .route("/__livereload", get(livereload_handler))
         .nest_service("/public", ServeDir::new(&config.dev.public_dir))
         .nest_service("/static", ServeDir::new(&config.routing.static_dir))
+        .nest_service(
+            &format!("/{}", luat::assets::IMMUTABLE_DIR),
+            ServeDir::new(dev_assets_dir(&working_dir).join(luat::assets::IMMUTABLE_DIR)),
+        )
         .fallback(fallback_handler)
         .with_state(state);
 
@@ -184,6 +200,7 @@ async fn fallback_handler(State(state): State<Arc<AppState>>, request: Request<B
     };
 
     let engine = state.engine.read().await;
+    install_assets(&engine, &state);
     let result = match router.match_url(&request.path) {
         Some(route) => engine.respond_async(&route, &request).await,
         None => Ok(engine
@@ -200,7 +217,10 @@ async fn fallback_handler(State(state): State<Arc<AppState>>, request: Request<B
 
 fn luat_response_to_axum(response: LuatResponse, state: &AppState, request: &LuatRequest) -> Response {
     let options = luat::ShellOptions {
-        head: collect_head_assets(&state.config),
+        head: match &state.assets {
+            Some(assets) => assets.read().map(|m| m.head_tags()).unwrap_or_default(),
+            None => collect_head_assets(&state.config),
+        },
         ..Default::default()
     };
     let mut http = luat::finalize(response, request, &state.shell, &options);
@@ -224,6 +244,7 @@ async fn handle_simplified_route(state: &AppState, path: &str) -> Response {
     };
 
     let engine = state.engine.read().await;
+    install_assets(&engine, state);
 
     // Create empty context for now (simplified mode doesn't have load functions)
     let context = match engine.to_value(json!({
@@ -249,6 +270,18 @@ async fn handle_simplified_route(state: &AppState, path: &str) -> Response {
 
 
 
+
+/// Makes the latest client asset build available to templates (`asset()`).
+fn install_assets(engine: &Engine<FileSystemResolver>, state: &AppState) {
+    let Some(assets) = &state.assets else { return };
+    let lua = match assets.read() {
+        Ok(manifest) => manifest.to_lua(),
+        Err(_) => return,
+    };
+    if let Err(e) = engine.lua().load(lua).set_name("assets").exec() {
+        tracing::warn!(error = %e, "could not install client assets");
+    }
+}
 
 /// Collect head assets (CSS and JS files from public directory)
 fn collect_head_assets(config: &Config) -> String {

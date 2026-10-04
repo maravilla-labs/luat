@@ -59,7 +59,10 @@ impl FileWatcher {
                         .flat_map(|e| e.paths.iter())
                         .filter(|p| {
                             let ext = p.extension().and_then(|e| e.to_str());
-                            matches!(ext, Some("luat") | Some("lua"))
+                            matches!(
+                                ext,
+                                Some("luat" | "lua" | "js" | "mjs" | "ts" | "tsx" | "jsx" | "css")
+                            )
                         })
                         .map(|p| p.strip_prefix(&base_path).unwrap_or(p).to_path_buf())
                         .collect();

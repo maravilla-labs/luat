@@ -282,3 +282,44 @@ pub async fn prepare_build_tools(
 
     Ok(tool_paths)
 }
+
+/// The esbuild and (when Tailwind is enabled) Tailwind executables for
+/// building `[frontend] entries`: the project's own `node_modules/.bin`
+/// copies when it has them, downloaded ones otherwise.
+pub async fn asset_tools(
+    frontend_config: &ToolchainConfig,
+    project_dir: &std::path::Path,
+) -> ToolchainResult<(PathBuf, Option<PathBuf>)> {
+    let esbuild = match luat::assets::find_project_tool(project_dir, "esbuild") {
+        Some(path) => path,
+        None => ensure_tool(Tool::TypeScript, &frontend_config.esbuild_version).await?,
+    };
+    let tailwind = if frontend_config.get_enabled_tools().contains(&Tool::Tailwind) {
+        Some(match luat::assets::find_project_tool(project_dir, "tailwindcss") {
+            Some(path) => path,
+            None => ensure_tool(Tool::Tailwind, &frontend_config.tailwind_version).await?,
+        })
+    } else {
+        None
+    };
+    Ok((esbuild, tailwind))
+}
+
+/// Builds `[frontend] entries` into `<out_dir>/_luat/immutable`.
+pub async fn build_entries(
+    frontend_config: &ToolchainConfig,
+    project_dir: &std::path::Path,
+    out_dir: &std::path::Path,
+    production: bool,
+) -> anyhow::Result<luat::assets::AssetManifest> {
+    let (esbuild, tailwind) = asset_tools(frontend_config, project_dir).await?;
+    let options = luat::assets::AssetOptions {
+        project_dir: project_dir.to_path_buf(),
+        entries: frontend_config.entries.clone(),
+        out_dir: out_dir.to_path_buf(),
+        esbuild,
+        tailwind,
+        production,
+    };
+    Ok(luat::assets::build_assets(&options)?)
+}

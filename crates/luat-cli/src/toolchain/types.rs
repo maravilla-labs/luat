@@ -190,6 +190,13 @@ pub struct ToolchainConfig {
     /// Custom build scripts to run between Tailwind and TypeScript steps
     #[serde(default)]
     pub scripts: Vec<String>,
+
+    /// Client entries (`src/client/app.js`, `src/client/app.css`), built
+    /// with content-hashed names into `_luat/immutable/` (see
+    /// `luat::assets`). When set, they replace the fixed `*_entrypoint` /
+    /// `*_output` builds.
+    #[serde(default)]
+    pub entries: Vec<String>,
 }
 
 impl ToolchainConfig {

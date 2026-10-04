@@ -157,6 +157,9 @@ pub struct App {
     pub router: Router,
     /// The bundle's `app.html`, or the default shell.
     pub shell: AppShell,
+    /// Tags for the bundle's client assets, for `%luat.head%`
+    /// ([`ShellOptions::head`](crate::ShellOptions::head)).
+    pub head: String,
 }
 
 impl App {
@@ -187,11 +190,13 @@ impl App {
             Some(html) => AppShell::new(html),
             None => AppShell::default(),
         };
+        let head = globals.get::<Option<String>>("__assets_head")?.unwrap_or_default();
         let router = Router::from_paths(route_files.iter());
         Ok(Self {
             engine,
             router,
             shell,
+            head,
         })
     }
 }

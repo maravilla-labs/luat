@@ -23,9 +23,26 @@ pub async fn run(source: bool, output: &str) -> anyhow::Result<()> {
     let config = Config::load()?;
     let working_dir = std::env::current_dir()?;
 
-    // Run frontend build if any tools are enabled
+    let output_path = Path::new(output);
+
+    // Client entries: hashed files under <output>/_luat/immutable, their
+    // manifest embedded into the bundle.
+    let assets = if config.frontend.entries.is_empty() {
+        None
+    } else {
+        println!("Building client assets...");
+        let manifest =
+            crate::toolchain::build_entries(&config.frontend, &working_dir, output_path, true).await?;
+        for (source, entry) in manifest.entries() {
+            println!("  {} {} -> {}", style("✓").green(), source, entry.file);
+        }
+        println!();
+        Some(manifest)
+    };
+
+    // Fixed-path frontend build (projects without entries)
     let enabled_tools = config.frontend.get_enabled_tools();
-    if !enabled_tools.is_empty() {
+    if assets.is_none() && !enabled_tools.is_empty() {
         println!("Building frontend assets...");
         let tool_paths = prepare_build_tools(&config.frontend, false).await?;
         let mut orchestrator =
@@ -54,6 +71,7 @@ pub async fn run(source: bool, output: &str) -> anyhow::Result<()> {
         // The CLI registers these before serving (see server/http.rs, serve.rs).
         host_modules: vec!["http".to_string(), "kv".to_string()],
         packages_dir: Some(packages_dir),
+        assets,
     };
 
     let pb = ProgressBar::new(0);
@@ -86,7 +104,6 @@ pub async fn run(source: bool, output: &str) -> anyhow::Result<()> {
         built.route_count
     );
 
-    let output_path = Path::new(output);
     fs::create_dir_all(output_path)?;
     let bundle_file = output_path.join("bundle.lua");
     fs::write(&bundle_file, built.bundle.source())?;

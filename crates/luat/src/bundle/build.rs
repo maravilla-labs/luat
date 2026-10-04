@@ -53,6 +53,11 @@ pub struct BuildOptions {
     /// described in [`crate::package_paths`], so the bundle needs no
     /// packages directory at runtime.
     pub packages_dir: Option<PathBuf>,
+    /// Client assets built for this bundle (see [`crate::assets`]). They are
+    /// embedded, so templates can call `asset("src/client/app.js")` and the
+    /// app shell gets their tags in `%luat.head%`.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub assets: Option<crate::assets::AssetManifest>,
 }
 
 /// The result of a build.
@@ -146,6 +151,7 @@ pub fn build(options: &BuildOptions, progress: impl FnMut(usize, usize)) -> Resu
         emit::server_sources(&server_sources),
         emit::route_files(&routes),
         emit::app_html(app_html.as_deref()),
+        emit::assets(options),
     ]
     .join("\n");
     // Data goes before the final `return __modules`, after all module
