@@ -25,7 +25,7 @@ repository = "https://example.com/acme/ui"
 keywords = ["ui", "components"]
 # Luat versions the package works with (semver requirement against the
 # luat version that builds the consuming project).
-luat = ">=0.2"
+luat = ">=0.1"
 # Files to ship. Default: src/**, README*, LICENSE*, CHANGELOG*, luat.toml.
 # luat.toml is always shipped. Patterns are globs relative to the package
 # root; `*` does not cross `/`. Symlinks are never shipped.
@@ -63,7 +63,8 @@ project: versions that do not accept it are skipped.
 # A local directory (path dependency), relative to this luat.toml.
 "@acme/forms" = { path = "../forms" }
 
-# Optional. Without it every scope uses the default registry.
+# Optional. Without it every scope uses the default registry. Registry
+# URLs must be https:// (plain http:// is accepted for localhost only).
 [registries]
 default = "https://luat.registry.maravilla.cloud"
 "@private" = "https://registry.example.com/luat"
@@ -134,15 +135,37 @@ default = "https://luat.registry.maravilla.cloud"
   tokens per registry URL in the user's config directory
   (`$XDG_CONFIG_HOME/luat/credentials.toml`, falling back to
   `~/.config/luat/credentials.toml`, or `%APPDATA%\luat\credentials.toml`
-  on Windows; mode 0600), and the `LUAT_REGISTRY_TOKEN` environment
-  variable overrides it (for CI). Tokens are sent to every request of the
-  registry they belong to, so private registries may require them for
-  reads too:
+  on Windows; mode 0600):
 
   ```toml
   [registries."https://registry.example.com/luat"]
   token = "…"
   ```
+
+- A cloned project is untrusted, so tokens never follow its `luat.toml`
+  or `luat.lock`:
+  - A token is bound to the exact registry URL it was stored for
+    (normalized: lowercase host, default port dropped, no trailing slash)
+    and is only sent there, never on a redirect (authenticated requests do
+    not follow redirects).
+  - Only `luat publish`, `luat yank` and `luat login` (`/api/v1/me`)
+    authenticate. Index reads, downloads, package info and search are
+    always anonymous, so `luat install` / `add` / `update` and the
+    automatic installs of `luat build` / `luat dev` send no credentials.
+  - The `LUAT_REGISTRY_TOKEN` environment variable (for CI) takes
+    precedence over the credentials file, but only for the default
+    registry (`https://luat.registry.maravilla.cloud`) — or, when
+    `LUAT_REGISTRY_TOKEN_FOR=<registry URL>` is set, only for that URL.
+  - A `luat.lock` entry whose `registry` is not the one `luat.toml`
+    selects for its scope, or whose `path+` source is not a path
+    dependency `luat.toml` declares, is an error (`luat update` re-resolves
+    from `luat.toml`). Downloads are verified against the lockfile
+    checksum, which must also equal the registry index's checksum for that
+    version.
+  - Installing never writes through symlinks: `.luat`, `.luat/packages`,
+    scope and package directories that are symlinks are refused, packages
+    are unpacked into a new temporary directory inside `.luat/packages`
+    with files created exclusively, then renamed into place.
 
 ## Tarball
 
@@ -175,7 +198,7 @@ Every version of a package, one JSON object per line (newline-delimited),
 oldest first. Clients resolve from this alone.
 
 ```json
-{"name":"@acme/ui","vers":"1.2.0","deps":{"@acme/icons":"^2.0"},"cksum":"sha256:3b5f…","luat":">=0.2","yanked":false}
+{"name":"@acme/ui","vers":"1.2.0","deps":{"@acme/icons":"^2.0"},"cksum":"sha256:3b5f…","luat":">=0.1","yanked":false}
 ```
 
 `luat` is `null` when the package states no luat requirement.
